@@ -41,7 +41,7 @@ struct SimParams {
   std::string bc_left, bc_right, bc_top, bc_bottom;
   //gas initial condition
   std::string gas_profile;
-  double gas_rho0, gas_p0, gas_u0, gas_v0;
+  double gas_rho0, gas_p0, gas_u0, gas_v0, gas_mu; 
   //particle initial condition
   double pz0, pr0, pvz0, pvr0, pmass, pradius;
   //output
@@ -101,6 +101,7 @@ inline SimParams readParams(const std::string& filename) {
   p.gas_p0      = getd("gas_p0");
   p.gas_u0      = getd("gas_u0");
   p.gas_v0      = getd("gas_v0");
+  p.gas_mu      = getd("gas_mmu");
 
   //particle IC
   p.pz0     = getd("particle_x");

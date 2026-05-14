@@ -66,6 +66,31 @@ double cfl_dt(const Grid& grid, double dz, double dr, double gamma, double CFL_m
 }
 
 
+double diffuse_dt(const Grid& grid, double dz, double dr, 
+                  double gamma, double mu, double kappa_func(double T)){
+
+  size_t nz = grid.rows()-4;
+  size_t nr = grid.cols()-4;
+  double dt_min = std::numeric_limits<double>::max();//numeric error minimum
+  for (size_t i=2; i<nz+2; i++){
+    for (size_t j=2; j<nr+2; j++){
+      Vector Q = CellToVec(grid.getCell(i, j));
+      double rho = Q[0];
+      double u   = Q[1]/rho;
+      double v   = Q[2]/rho;
+      double p   = (gamma-1.0)*(Q[3]-0.5*rho*(u*u-v*v));
+      double T   = p*m_p*mu/(rho*k_B);
+      double kappa = kappa_func(T);
+      double cv = k_B/(mu*m_p*(gamma-1.0));
+      double alpha = kappa/(rho*cv); //diffusivity
+      double dt_cell = 1.0/(2.0*alpha*(1.0/(dz*dz)+1.0/(dr*dr)));
+      dt_min = std::min(dt_min, dt_cell);
+    }
+  }
+  return dt_min;
+}
+
+
 static Vector grav_source(const Vector& Q, double z_im1, double z_ip1, double Omega, double dz) {
   double rho = Q[0];
   double u   = Q[1] / rho;
@@ -321,6 +346,7 @@ int main(int argc, char*argv[]){
   double rmin = par.rmin, rmax = par.rmax;
   double gamma = par.gamma;
   double Omega = par.Omega;
+  double mu    = par.gas_mu;
 
   double dt = (tf - t0) / Nt;
   double dz = (zmax - zmin) / Nz;
@@ -344,21 +370,27 @@ int main(int argc, char*argv[]){
 
   //cfl condition check: either new dt or continue with CFL
   double cfl = cfl_dt(grid, dz, dr, gamma);
+  double diffuse = diffuse_dt(grid, dz, dr, gamma, mu, kappa_null);
   double dt_leapfrog = 1.0/(2.0*Omega); //stability condition of gravity source
-  if (dt > cfl && cfl < dt_leapfrog){
+  if (dt > cfl && cfl < dt_leapfrog && cfl < diffuse){
     std::cout << "Warning: dt=" << dt << " exceeds CFL limit=" << cfl
               << ", using CFL dt"<<std::endl;
     dt = cfl;
     Nt = (int)std::ceil((tf - t0) / dt);
     std::cout << "Nt updated to " << Nt <<std::endl;
   } else if (dt > cfl && cfl > dt_leapfrog){
-    std::cout << "Warning: dt=" << dt << " exceeds CFL limit=" << cfl
-              << ", using CFL dt"<<std::endl;
+    std::cout << "Warning: dt=" << dt << " exceeds Leapfrog limit=" << dt_leapfrog
+              << ", using Leapfrog dt"<<std::endl;
     dt = dt_leapfrog;
     Nt = (int)std::ceil((tf - t0) / dt);
     std::cout << "Nt updated to " << Nt <<std::endl;
+  } else if (dt > cfl && cfl > diffuse){
+    std::cout << "Warning: dt=" << dt << " exceeds diffusive CFL limit=" << diffuse
+              << ", using diffusive CFL dt"<<std::endl;
+    dt = diffuse;
+    Nt = (int)std::ceil((tf - t0) / dt);
+    std::cout << "Nt updated to " << Nt <<std::endl;
   }
-
 
   setupOutputDir(par.outdir);
   writeMetadata(par.outdir, par);
@@ -399,7 +431,7 @@ int main(int argc, char*argv[]){
 
         Grid S_grid(nz, nr);
         source_projection(S_grid, p, gas_new, W_new, dz, dr, dt, gamma);
-        grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, 0.0, kappa_null);
+        grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, mu, kappa_null);
         applyBC(grid, bc, Omega, cs2, gamma, dz);
 
         CICWeights W_np1 = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
@@ -407,12 +439,12 @@ int main(int argc, char*argv[]){
         leapfrog_second_half(p, gas_np1, Omega, dt);
       } else {
         Grid S_grid(nz, nr);
-        grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, 0.0, kappa_null);
+        grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, mu, kappa_null);
         applyBC(grid, bc, Omega, cs2, gamma, dz);
       }
     } else {
       Grid S_grid(nz, nr);  //empty source, just advance gas
-      grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, 0.0, kappa_null);
+      grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, mu, kappa_null);
       applyBC(grid, bc, Omega, cs2, gamma, dz);
     }
     if (n == 0) {
