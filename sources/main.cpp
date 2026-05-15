@@ -399,11 +399,12 @@ int main(int argc, char*argv[]){
   double t = t0;
 
   double g_kappa0 = 0.0, g_kappa_alpha = 0.0, g_T0 = 1.0;
+  double write_fact = 2.71828;
+  int next_save = 1;
 
 
   for (int n = 0; n<(int)Nt; n++){
     t = t0 + n*dt;
-    // writeFrame(gridfile, grid, t, (size_t)Nx, (size_t)Ny);
 
     if (n % 5000 == 0) {
       double progress = (double)n / Nt * 100.0;
@@ -411,7 +412,17 @@ int main(int argc, char*argv[]){
                 << " [" << std::fixed << std::setprecision(2) << progress << "%] "
                 << "t = " << t << std::endl; 
     }
-    writeParticle(particlefile, p, t, n);
+
+    if (n>=next_save){
+      writeParticle(particlefile, p, t, n);
+      // writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
+      next_save = static_cast<int>(next_save*write_fact);
+      if(next_save<=n){
+        next_save = n+1;
+      }
+    }
+
+
     applyBC(grid, bc, Omega, cs2, gamma, dz);
     if (n == 0) {
     std::cout << "ghost i="<< nz-2 <<": rho=" << grid(nz-2,2, 0) 

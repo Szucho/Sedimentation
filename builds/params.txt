@@ -28,7 +28,7 @@ gas_rho0        1.84e-9
 gas_p0          9.8574
 gas_u0          0.0
 gas_v0          0.0
-gas_mu          1.0
+gas_mu          2.3
 # gaussian_z centers the peak at xmin and uses H = cs/Omega as width
 
 # Particle initial condition
