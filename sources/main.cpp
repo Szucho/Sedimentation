@@ -30,7 +30,7 @@ constexpr double m_p = 1.672622e-24;  //g
  Boundary conditions: Open, Closed, Periodic, Dirichlet (user specified)
 
  Usage: set init_cond() for your problem (DON'T FORGET THIS), then build and run.
- Build: clang++ -std=c++17 -O2 -I./headers sources/HLLC.cpp sources/slope_limiters.cpp sources/grid_setup.cpp sources/particle.cpp sources/main.cpp -o builds/solver_name
+ Build: clang++ -std=c++17 -O3 -march=native -I./headers sources/HLLC.cpp sources/slope_limiters.cpp sources/grid_setup.cpp sources/particle.cpp sources/main.cpp -o builds/solver_name
  No CMake yet as I can't be bothered to write one
  Validated on Sod shock tube (Toro, Chapter 4)
 
@@ -399,7 +399,7 @@ int main(int argc, char*argv[]){
   double t = t0;
 
   double g_kappa0 = 0.0, g_kappa_alpha = 0.0, g_T0 = 1.0;
-  double write_fact = 2.71828;
+  double write_fact = 1.1;
   int next_save = 1;
 
 
@@ -415,11 +415,17 @@ int main(int argc, char*argv[]){
 
     if (n>=next_save){
       writeParticle(particlefile, p, t, n);
+      // particlefile.flush(); //DEBUG
       // writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
-      next_save = static_cast<int>(next_save*write_fact);
-      if(next_save<=n){
+      int current_next = next_save;
+      next_save = static_cast<int>(current_next*write_fact);
+      if(next_save<=current_next){
+        next_save = current_next+1;
+      }
+      if (next_save <=n){
         next_save = n+1;
       }
+      // std::cout << "Saved step " << n << ". Next target step: " << next_save << std::endl;
     }
 
 

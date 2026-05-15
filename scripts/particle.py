@@ -44,6 +44,7 @@ data = read_particle_bin(os.path.join(outdir, "particle.bin"))
 
 # Conversions
 # Simulated time in years
+print(data.shape)
 t_yr = data['t'] / (60 * 60 * 24 * 365)
 x = data["x"]/meta["H_iso"]
 vx = data['vx']/np.sqrt(meta["cs_iso"])
