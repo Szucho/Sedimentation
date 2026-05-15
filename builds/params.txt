@@ -1,0 +1,43 @@
+# params.txt
+
+# Grid
+Nz      100
+Nr      5
+Nt      1000
+t0      0.0
+tf      3.1536e12
+zmin    0.0
+zmax    3.0e12
+rmin    0.0
+rmax    2.24396806e13
+
+# Physics
+gamma   1.4
+Omega   1.9906e-7
+
+# Boundary conditions
+bc_left     Open
+bc_right    Open
+bc_top      Open
+bc_bottom   Open
+
+# Gas initial condition
+# profiles: uniform, gaussian_z
+gas_profile     gaussian_z
+gas_rho0        1.84e-9
+gas_p0          9.8574
+gas_u0          0.0
+gas_v0          0.0
+gas_mu          1.0
+# gaussian_z centers the peak at xmin and uses H = cs/Omega as width
+
+# Particle initial condition
+particle_z      2.6e12
+particle_r      1.49597871e13
+particle_vz     0.0
+particle_vr     0.0
+particle_mass   0.000012566
+particle_radius 1e-2
+
+# Output
+outdir 100mikron

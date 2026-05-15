@@ -101,13 +101,13 @@ inline SimParams readParams(const std::string& filename) {
   p.gas_p0      = getd("gas_p0");
   p.gas_u0      = getd("gas_u0");
   p.gas_v0      = getd("gas_v0");
-  p.gas_mu      = getd("gas_mmu");
+  p.gas_mu      = getd("gas_mu");
 
   //particle IC
-  p.pz0     = getd("particle_x");
-  p.pr0     = getd("particle_y");
-  p.pvz0    = getd("particle_vx");
-  p.pvr0    = getd("particle_vy");
+  p.pz0     = getd("particle_z");
+  p.pr0     = getd("particle_r");
+  p.pvz0    = getd("particle_vz");
+  p.pvr0    = getd("particle_vr");
   p.pmass   = getd("particle_mass");
   p.pradius = getd("particle_radius");
 

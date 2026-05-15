@@ -38,7 +38,7 @@ def read_meta(outdir):
     return meta
 
 # Execution
-outdir = "./1mikron2"
+outdir = "./100mikron"
 meta = read_meta(outdir)
 data = read_particle_bin(os.path.join(outdir, "particle.bin"))
 
