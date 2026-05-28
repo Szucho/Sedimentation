@@ -116,12 +116,13 @@ Vector HLLC_step(const Vector& Qi,
 }
 
 
+template <typename Func>
 Grid timestep(const Grid& grid,
               const Grid& S_grid,
               double zmin,
               double dz, double dr, double dt,
               double gamma, double Omega,
-              double mu, double kappa_func(double T)){
+              double mu, Func kappa_func){
   size_t nz = grid.rows();
   size_t nr = grid.cols();
   Grid grid_new(nz, nr);
@@ -330,7 +331,350 @@ Grid timestep(const Grid& grid,
 // }
 
 
-double kappa_null(double T) {return 0.0;}
+//IMPLICIT IMPLEMENTATION (Q & U are the same, the Batten et al. 1997 article uses U instead of Q)
+//residual vaiting for minimalization
+template <typename Func>
+Grid compute_residual(const Grid& grid,
+                      double zmin,
+                      double dz, double dr,
+                      double gamma, double Omega,
+                      double mu, Func kappa_func) {
+  size_t nz = grid.rows();
+  size_t nr = grid.cols();
+  Grid R(nz, nr);   //residual grid, basically what we had in timestep without dt
+
+  
+  auto getT = [&](size_t i, size_t j) -> double {
+    auto Q = CellToVec(grid.getCell(i,j));
+    double rho = Q[0], u = Q[1]/rho, v = Q[2]/rho;
+    double p = (gamma-1.0)*(Q[3] - 0.5*rho*(u*u+v*v));
+    return p*m_p*mu/(rho*k_B);
+  };
+
+  for (size_t i = 2; i < nz-2; i++) {
+    double z_i   = zmin + (i-2)*dz + 0.5*dz;
+    double z_im1 = z_i - dz,  z_ip1 = z_i + dz;
+    double z_im2 = z_im1 - dz, z_ip2 = z_ip1 + dz;
+
+    for (size_t j = 2; j < nr-2; j++) {
+      Vector Qi   = CellToVec(grid.getCell(i,  j));
+      Vector Qim1 = CellToVec(grid.getCell(i-1,j));
+      Vector Qim2 = CellToVec(grid.getCell(i-2,j));
+      Vector Qip1 = CellToVec(grid.getCell(i+1,j));
+      Vector Qip2 = CellToVec(grid.getCell(i+2,j));
+      Vector Qjm1 = CellToVec(grid.getCell(i,j-1));
+      Vector Qjm2 = CellToVec(grid.getCell(i,j-2));
+      Vector Qjp1 = CellToVec(grid.getCell(i,j+1));
+      Vector Qjp2 = CellToVec(grid.getCell(i,j+2));
+
+      //slopes stay the same
+      Vector sigma_im1_z, sigma_i_z, sigma_ip1_z;
+      if (i == 2) {
+        sigma_im1_z = Vector(4,0.0); sigma_i_z = Vector(4,0.0);
+        sigma_ip1_z = sigma_minmod(Qi, Qip1, Qip2, dz);
+      } else if (i == nz-3) {
+        sigma_im1_z = sigma_minmod(Qim2,Qim1,Qi,dz);
+        sigma_i_z   = Vector(4,0.0); sigma_ip1_z = Vector(4,0.0);
+      } else {
+        sigma_im1_z = sigma_minmod(Qim2,Qim1,Qi,  dz);
+        sigma_i_z   = sigma_minmod(Qim1,Qi,  Qip1,dz);
+        sigma_ip1_z = sigma_minmod(Qi,  Qip1,Qip2,dz);
+      }
+      Vector sigma_jm1_r, sigma_j_r, sigma_jp1_r;
+      if (j == 2) {
+        sigma_jm1_r = Vector(4,0.0); sigma_j_r = Vector(4,0.0);
+        sigma_jp1_r = sigma_minmod(Qi, Qjp1, Qjp2, dr);
+      } else if (j == nr-3) {
+        sigma_jm1_r = sigma_minmod(Qjm2,Qjm1,Qi,dr);
+        sigma_j_r   = Vector(4,0.0); sigma_jp1_r = Vector(4,0.0);
+      } else {
+        sigma_jm1_r = sigma_minmod(Qjm2,Qjm1,Qi,  dr);
+        sigma_j_r   = sigma_minmod(Qjm1,Qi,  Qjp1,dr);
+        sigma_jp1_r = sigma_minmod(Qi,  Qjp1,Qjp2,dr);
+      }
+
+      //state vectors at interfaces, same as before
+      Vector QL_imh = Qim1 + 0.5*dz*sigma_im1_z;
+      Vector QR_imh = Qi   - 0.5*dz*sigma_i_z;
+      Vector QL_iph = Qi   + 0.5*dz*sigma_i_z;
+      Vector QR_iph = Qip1 - 0.5*dz*sigma_ip1_z;
+
+      //well balanced - Käppeli et al. 2016
+      Primitive_Vals prim_im2 = QtoPrim(Qim2, gamma);
+      Primitive_Vals prim_im1 = QtoPrim(Qim1, gamma);
+      Primitive_Vals prim_i   = QtoPrim(Qi,   gamma);
+      Primitive_Vals prim_ip1 = QtoPrim(Qip1, gamma);
+      Primitive_Vals prim_ip2 = QtoPrim(Qip2, gamma);
+
+      //phi(x) = 1/2*Omega^2 x^2
+      double p0_at_imh = prim_i.p + 0.5*prim_i.rho*(0.5*Omega*Omega*(z_i*z_i - z_im1*z_im1)); 
+      double p0_at_iph = prim_i.p - 0.5*prim_i.rho*(0.5*Omega*Omega*(z_ip1*z_ip1 - z_i*z_i));
+      double p0_at_im1h = prim_im1.p - 0.5*prim_im1.rho*(0.5*Omega*Omega*(z_i*z_i - z_im1*z_im1));
+      double p0_at_ip1h = prim_ip1.p + 0.5*prim_ip1.rho*(0.5*Omega*Omega*(z_ip1*z_ip1 - z_i*z_i));
+
+      double p0_at_im1 = prim_i.p + 0.5*(prim_im1.rho+prim_i.rho) * 0.5*Omega*Omega*(z_i*z_i - z_im1*z_im1);
+      double p0_at_ip1 = prim_i.p - 0.5*(prim_ip1.rho+prim_i.rho) * 0.5*Omega*Omega*(z_ip1*z_ip1 - z_i*z_i);
+      double p0_at_im2 = prim_im1.p + 0.5*(prim_im2.rho+prim_im1.rho) * 0.5*Omega*Omega*(z_im1*z_im1 - z_im2*z_im2);
+      double p0_at_ip2 = prim_ip1.p - 0.5*(prim_ip2.rho+prim_ip1.rho) * 0.5*Omega*Omega*(z_ip2*z_ip2 - z_ip1*z_ip1);
+ 
+      //p1,i(x_i) = 0 by design
+      double p1_ip1 = prim_ip1.p - p0_at_ip1;
+      double p1_im1 = prim_im1.p - p0_at_im1;
+      double p1_im2 = prim_im2.p - p0_at_im2;
+      double p1_ip2 = prim_ip2.p - p0_at_ip2;
+      //slope with p1,i(x_i)=0
+      double sigma_pi = minmod_one(p1_im1, 0.0, p1_ip1, dz);
+      double sigma_pim1 = minmod_one(p1_im2, p1_im1, 0.0, dz);
+      double sigma_pip1 = minmod_one(0.0, p1_ip1, p1_ip2, dz);
+
+
+      QL_imh[3] = (p0_at_im1h + 0.5*sigma_pim1*dz)/(gamma-1.0)
+                + 0.5*(QL_imh[1]*QL_imh[1]+QL_imh[2]*QL_imh[2])/QL_imh[0];
+      QR_imh[3] = (p0_at_imh - 0.5*sigma_pi*dz)/(gamma-1.0)
+                + 0.5*(QR_imh[1]*QR_imh[1]+QR_imh[2]*QR_imh[2])/QR_imh[0];
+      QR_iph[3] = (p0_at_ip1h - 0.5*sigma_pip1*dz)/(gamma-1.0)
+                + 0.5*(QR_iph[1]*QR_iph[1] + QR_iph[2]*QR_iph[2])/QR_iph[0];
+      QL_iph[3] = (p0_at_iph + 0.5*sigma_pi*dz)/(gamma-1.0)
+                + 0.5*(QL_iph[1]*QL_iph[1] + QL_iph[2]*QL_iph[2])/QL_iph[0];
+
+      //q2 direction
+      Vector QL_jmh = Qjm1 + 0.5*dr*sigma_jm1_r;
+      Vector QR_jmh = Qi   - 0.5*dr*sigma_j_r;
+      Vector QL_jph = Qi   + 0.5*dr*sigma_j_r;
+      Vector QR_jph = Qjp1 - 0.5*dr*sigma_jp1_r;
+
+      //HLLC fluxes, same as in timestep func
+      Vector FZimh = Fluxhllc_q1(QL_imh, QR_imh, gamma);
+      Vector FZiph = Fluxhllc_q1(QL_iph, QR_iph, gamma);
+      Vector FRjmh = Fluxhllc_q2(QL_jmh, QR_jmh, gamma);
+      Vector FRjph = Fluxhllc_q2(QL_jph, QR_jph, gamma);
+
+      //flux divergence + gravity + diffusion (no dt)
+      Vector Rij = -(1.0/dz)*(FZiph - FZimh) - (1.0/dr)*(FRjph - FRjmh)
+                 + grav_source(Qi, z_im1, z_ip1, Omega, dz);
+
+      //heat diffusion
+      double T_ij  = getT(i,j), T_ip1 = getT(i+1,j), T_im1 = getT(i-1,j);
+      double T_jp1 = getT(i,j+1), T_jm1 = getT(i,j-1);
+      double k_iph = 0.5*(kappa_func(T_ij)+kappa_func(T_ip1));
+      double k_imh = 0.5*(kappa_func(T_ij)+kappa_func(T_im1));
+      double k_jph = 0.5*(kappa_func(T_ij)+kappa_func(T_jp1));
+      double k_jmh = 0.5*(kappa_func(T_ij)+kappa_func(T_jm1));
+      Rij[3] += (k_iph*(T_ip1-T_ij) - k_imh*(T_ij-T_im1))/(dz*dz)
+              + (k_jph*(T_jp1-T_ij) - k_jmh*(T_ij-T_jm1))/(dr*dr);
+
+      R.setCell(i, j, VecToCell(Rij));
+    }
+  }
+  return R;
+}
+
+
+//1 backward-Euler implicit step (Batten et al. 1997)
+//approximate factorisation: z-sweep then r-sweep, each a block-tridiagonal solve.
+//S_grid (particle back-reaction) is operator split, added explicitly at the end for now.
+template <typename Func>
+Grid implicit_step_B1(const Grid& grid, const Grid& S_grid,
+                      double zmin, double dz, double dr, double dt,
+                      double gamma, double Omega,
+                      double mu, Func kappa_func) {
+  size_t nz = grid.rows(), nr = grid.cols();
+  size_t Nz = nz - 4, Nr = nr - 4;
+
+  Grid R  = compute_residual(grid, zmin, dz, dr, gamma, Omega, mu, kappa_func);
+  Grid dW(nz, nr);   //result of z-sweep
+
+
+
+  std::vector<Matrix> LU_z(Nz, Matrix(4,4,0.0));
+  std::vector<std::vector<int>> piv_z(Nz, std::vector<int>(4,0));
+  //z-sweep, for each fixed j, solve block-tridiagonal in i
+  for (size_t j = 2; j < nr-2; j++) {
+    std::vector<Matrix> Az(Nz, Matrix(4,4,0.0));
+    std::vector<Matrix> Dz(Nz, Matrix(4,4,0.0));
+    std::vector<Matrix> Cz(Nz, Matrix(4,4,0.0));
+    std::vector<Vector> rz(Nz, Vector(4,0.0));
+
+    for (size_t ii = 0; ii < Nz; ii++) {
+      size_t i = ii + 2;
+
+      //gravity source
+      double z_i = zmin + ii*dz + 0.5*dz;
+      double G = Omega*Omega*z_i;
+      Matrix dSdU(4,4,0.0);
+      dSdU(1,0) = -G;
+      dSdU(3,1) = -G;
+
+      rz[ii] = CellToVec(R.getCell(i, j));
+      for (int k = 0; k < 4; k++) Dz[ii](k,k) = 1.0/dt; //I/dt
+
+      //slope-limited interface states with same logic as compute_residual
+      Vector Qi   = CellToVec(grid.getCell(i,  j));
+      Vector Qim1 = CellToVec(grid.getCell(i-1,j));
+      Vector Qim2 = CellToVec(grid.getCell(i-2,j));
+      Vector Qip1 = CellToVec(grid.getCell(i+1,j));
+      Vector Qip2 = CellToVec(grid.getCell(i+2,j));
+
+      Vector sig_im1, sig_i, sig_ip1;
+      if (ii == 0) {
+        sig_im1 = Vector(4,0.0); sig_i = Vector(4,0.0);
+        sig_ip1 = sigma_minmod(Qi, Qip1, Qip2, dz);
+      } else if (ii == Nz-1) {
+        sig_im1 = sigma_minmod(Qim2,Qim1,Qi,dz);
+        sig_i   = Vector(4,0.0); sig_ip1 = Vector(4,0.0);
+      } else {
+        sig_im1 = sigma_minmod(Qim2,Qim1,Qi,  dz);
+        sig_i   = sigma_minmod(Qim1,Qi,  Qip1,dz);
+        sig_ip1 = sigma_minmod(Qi,  Qip1,Qip2,dz);
+      }
+
+      Vector QL_imh = Qim1 + 0.5*dz*sig_im1;
+      Vector QR_imh = Qi   - 0.5*dz*sig_i;
+      Vector QL_iph = Qi   + 0.5*dz*sig_i;
+      Vector QR_iph = Qip1 - 0.5*dz*sig_ip1;
+
+      //well-balanced energy correction omitted from Jacobi states.
+      //The correction is already in R (the explicit RHS); 
+      //Jacobi uses the unmodified slope-limited states for stability.
+
+      HLLCJac Jimh = hllc_jacobian_q1(QL_imh, QR_imh, gamma);
+      HLLCJac Jiph = hllc_jacobian_q1(QL_iph, QR_iph, gamma);
+
+      //lower block: A[ii] = -(1/dz)*J_{i-1/2} dF_dUl
+      //zero for ii=0: ghost cell delta U treated as 0
+      if (ii > 0)
+        Az[ii] = Jimh.dF_dUl * (-1.0/dz);
+
+      //diagonal: I/dt + (1/dz)*J_{i+1/2}dF_dUl - (1/dz)*J_{i-1/2}dF_dUr
+      Dz[ii] += Jiph.dF_dUl * (1.0/dz);
+      Dz[ii] -= Jimh.dF_dUr * (1.0/dz);
+
+      //gravity source subtracted from Dz
+      Dz[ii] = Dz[ii] - dSdU;
+
+      //upper block: C[ii] = (1/dz)*J_{i+1/2}dF_dUr
+      if (ii < Nz-1)
+        Cz[ii] = Jiph.dF_dUr * (1.0/dz);
+    }
+
+    block_thomas(Az, Dz, Cz, rz, Nz, LU_z, piv_z);
+    for (size_t ii = 0; ii < Nz; ii++)
+      dW.setCell(ii+2, j, VecToCell(rz[ii]));
+  }
+
+  std::vector<Matrix> LU_r(Nr, Matrix(4,4,0.0));
+  std::vector<std::vector<int>> piv_r(Nr, std::vector<int>(4,0));
+  //r-sweep, for each fixed i, solve block-tridiagonal in j using delta W as RHS
+  Grid dU(nz, nr);
+
+  for (size_t i = 2; i < nz-2; i++) {
+    std::vector<Matrix> Ar(Nr, Matrix(4,4,0.0));
+    std::vector<Matrix> Dr(Nr, Matrix(4,4,0.0));
+    std::vector<Matrix> Cr(Nr, Matrix(4,4,0.0));
+    std::vector<Vector> rr(Nr, Vector(4,0.0));
+
+    for (size_t jj = 0; jj < Nr; jj++) {
+      size_t j = jj + 2;
+
+      rr[jj] = 1/dt * CellToVec(dW.getCell(i, j));
+      for (int k = 0; k < 4; k++) Dr[jj](k,k) = 1.0/dt;
+
+      Vector Qi   = CellToVec(grid.getCell(i,j  ));
+      Vector Qjm1 = CellToVec(grid.getCell(i,j-1));
+      Vector Qjm2 = CellToVec(grid.getCell(i,j-2));
+      Vector Qjp1 = CellToVec(grid.getCell(i,j+1));
+      Vector Qjp2 = CellToVec(grid.getCell(i,j+2));
+
+      Vector sig_jm1, sig_j, sig_jp1;
+      if (jj == 0) {
+        sig_jm1 = Vector(4,0.0); sig_j = Vector(4,0.0);
+        sig_jp1 = sigma_minmod(Qi, Qjp1, Qjp2, dr);
+      } else if (jj == Nr-1) {
+        sig_jm1 = sigma_minmod(Qjm2,Qjm1,Qi,dr);
+        sig_j   = Vector(4,0.0); sig_jp1 = Vector(4,0.0);
+      } else {
+        sig_jm1 = sigma_minmod(Qjm2,Qjm1,Qi,  dr);
+        sig_j   = sigma_minmod(Qjm1,Qi,  Qjp1,dr);
+        sig_jp1 = sigma_minmod(Qi,  Qjp1,Qjp2,dr);
+      }
+
+      Vector QL_jmh = Qjm1 + 0.5*dr*sig_jm1;
+      Vector QR_jmh = Qi   - 0.5*dr*sig_j;
+      Vector QL_jph = Qi   + 0.5*dr*sig_j;
+      Vector QR_jph = Qjp1 - 0.5*dr*sig_jp1;
+
+      HLLCJac Jjmh = hllc_jacobian_q2(QL_jmh, QR_jmh, gamma);
+      HLLCJac Jjph = hllc_jacobian_q2(QL_jph, QR_jph, gamma);
+
+      if (jj > 0)
+        Ar[jj] = Jjmh.dF_dUl * (-1.0/dr);
+
+      Dr[jj] += Jjph.dF_dUl * (1.0/dr);
+      Dr[jj] -= Jjmh.dF_dUr * (1.0/dr);
+
+      if (jj < Nr-1)
+        Cr[jj] = Jjph.dF_dUr * (1.0/dr);
+    }
+
+    block_thomas(Ar, Dr, Cr, rr, Nr, LU_r, piv_r);
+    for (size_t jj = 0; jj < Nr; jj++)
+      dU.setCell(i, jj+2, VecToCell(rr[jj]));
+  }
+
+  //applying delta U and particle source (operator split, already contains dt)
+  Grid grid_new = grid;
+  for (size_t i = 2; i < nz-2; i++)
+    for (size_t j = 2; j < nr-2; j++) {
+      Vector Q_new = CellToVec(grid.getCell(i,j))
+                   + CellToVec(dU.getCell(i,j))
+                   + CellToVec(S_grid.getCell(i,j));
+      grid_new.setCell(i, j, VecToCell(Q_new));
+    }
+  return grid_new;
+}
+
+
+//B2 scheme eqs. (70)-(72) Batten et al. 1997
+//2 backward-Euler steps: dt/2 then dt, twice the convergence rate of B1.
+template <typename Func>
+Grid implicit_step_B2(const Grid& grid, const Grid& S_grid,
+                      const GridBC& bc, double cs2,
+                      double zmin, double dz, double dr, double dt,
+                      double gamma, double Omega,
+                      double mu, Func kappa_func) {
+  Grid S_empty(grid.rows(), grid.cols());   //S_grid applied once at the end only
+  
+  Grid U_bar = implicit_step_B1(grid,  S_empty, zmin, dz, dr, dt/2.0,
+                                gamma, Omega, mu, kappa_func);
+  
+  applyBC(U_bar, bc, Omega, cs2, gamma, dz);
+  
+    Grid dU2   = implicit_step_B1(U_bar, S_empty, zmin, dz, dr, dt,
+                                gamma, Omega, mu, kappa_func);
+
+  //U^{n+1} = U_bar + (dU2 - U_bar)/2 + S_grid
+  //so U_bar + dU_tilde/2 where dU_tilde = dU2 - U_bar
+  size_t nz = grid.rows(), nr = grid.cols();
+  Grid result = grid;
+
+  for (size_t i = 2; i < nz-2; i++){
+    for (size_t j = 2; j < nr-2; j++) {
+      Vector Q_bar = CellToVec(U_bar.getCell(i,j));
+      Vector dU2_val = CellToVec(dU2.getCell(i,j));
+      Vector S_val = CellToVec(S_grid.getCell(i,j));
+      
+      Vector Q = Q_bar + 0.5*(dU2_val - Q_bar) + S_val;
+      result.setCell(i, j, VecToCell(Q));
+    }
+  }
+  return result;
+}
+
+
+//ideal gas heat conduction coeff, f=3
+double kappa(double mu, double d, double T){
+  return 3/(3*d*d) * std::sqrt(k_B*k_B*k_B*T/(PI*PI*PI*mu*m_p)); //kappa = f/(3d^2) * sqrt(k_B^3 T/(pi^3 mu*m_p))
+}
 
 
 int main(int argc, char*argv[]){
@@ -365,31 +709,42 @@ int main(int argc, char*argv[]){
   init_cond(grid, par);
   applyBC(grid, bc, Omega, cs2, gamma, dz);
 
+  //d: effective cross section
+  double d = 1.0;
+  auto kappa_func = [mu, d](double T) -> double {
+    return kappa(mu, d, T);
+  };
+
   
   Particle p = initParticle(par);
 
   //cfl condition check: either new dt or continue with CFL
-  double cfl = cfl_dt(grid, dz, dr, gamma);
-  double diffuse = diffuse_dt(grid, dz, dr, gamma, mu, kappa_null);
+  // double cfl = cfl_dt(grid, dz, dr, gamma);
+  // double diffuse = diffuse_dt(grid, dz, dr, gamma, mu, kappa_null);
   double dt_leapfrog = 1.0/(2.0*Omega); //stability condition of gravity source
-  if (dt > cfl && cfl < dt_leapfrog && cfl < diffuse){
-    std::cout << "Warning: dt=" << dt << " exceeds CFL limit=" << cfl
-              << ", using CFL dt"<<std::endl;
-    dt = cfl;
-    Nt = (int)std::ceil((tf - t0) / dt);
-    std::cout << "Nt updated to " << Nt <<std::endl;
-  } else if (dt > cfl && cfl > dt_leapfrog){
-    std::cout << "Warning: dt=" << dt << " exceeds Leapfrog limit=" << dt_leapfrog
-              << ", using Leapfrog dt"<<std::endl;
+  // if (dt > cfl && cfl < dt_leapfrog && cfl < diffuse){
+  //   std::cout << "Warning: dt=" << dt << " exceeds CFL limit=" << cfl
+  //             << ", using CFL dt"<<std::endl;
+  //   dt = cfl;
+  //   Nt = (int)std::ceil((tf - t0) / dt);
+  //   std::cout << "Nt updated to " << Nt <<std::endl;
+  // } else if (dt > cfl && cfl > dt_leapfrog){
+  //   std::cout << "Warning: dt=" << dt << " exceeds Leapfrog limit=" << dt_leapfrog
+  //             << ", using Leapfrog dt"<<std::endl;
+  //   dt = dt_leapfrog;
+  //   Nt = (int)std::ceil((tf - t0) / dt);
+  //   std::cout << "Nt updated to " << Nt <<std::endl;
+  // } else if (dt > cfl && cfl > diffuse){
+  //   std::cout << "Warning: dt=" << dt << " exceeds diffusive CFL limit=" << diffuse
+  //             << ", using diffusive CFL dt"<<std::endl;
+  //   dt = diffuse;
+  //   Nt = (int)std::ceil((tf - t0) / dt);
+  //   std::cout << "Nt updated to " << Nt <<std::endl;
+  // }
+
+  if (dt > dt_leapfrog) {
     dt = dt_leapfrog;
     Nt = (int)std::ceil((tf - t0) / dt);
-    std::cout << "Nt updated to " << Nt <<std::endl;
-  } else if (dt > cfl && cfl > diffuse){
-    std::cout << "Warning: dt=" << dt << " exceeds diffusive CFL limit=" << diffuse
-              << ", using diffusive CFL dt"<<std::endl;
-    dt = diffuse;
-    Nt = (int)std::ceil((tf - t0) / dt);
-    std::cout << "Nt updated to " << Nt <<std::endl;
   }
 
   setupOutputDir(par.outdir);
@@ -398,7 +753,6 @@ int main(int argc, char*argv[]){
   auto particlefile = openParticleFile(par.outdir);
   double t = t0;
 
-  double g_kappa0 = 0.0, g_kappa_alpha = 0.0, g_T0 = 1.0;
   double write_fact = 1.1;
   int next_save = 1;
 
@@ -435,9 +789,6 @@ int main(int argc, char*argv[]){
               << " rhou=" << grid(nz-2,2, 1) <<std::endl;
     }
 
-    // Vector grav_x(nx,0.0);
-    // hydrostat(grav_x, grid, dx, gamma, nx);
-    
     if (p.active){
       CICWeights W = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
       GasAtParticle gas = interpolate_gas(grid, W, gamma);
@@ -448,7 +799,7 @@ int main(int argc, char*argv[]){
 
         Grid S_grid(nz, nr);
         source_projection(S_grid, p, gas_new, W_new, dz, dr, dt, gamma);
-        grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, mu, kappa_null);
+        grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
         applyBC(grid, bc, Omega, cs2, gamma, dz);
 
         CICWeights W_np1 = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
@@ -456,16 +807,17 @@ int main(int argc, char*argv[]){
         leapfrog_second_half(p, gas_np1, Omega, dt);
       } else {
         Grid S_grid(nz, nr);
-        grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, mu, kappa_null);
+        grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
         applyBC(grid, bc, Omega, cs2, gamma, dz);
       }
     } else {
       Grid S_grid(nz, nr);  //empty source, just advance gas
-      grid = timestep(grid, S_grid, zmin, dz, dr, dt, gamma, Omega, mu, kappa_null);
+      grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
       applyBC(grid, bc, Omega, cs2, gamma, dz);
     }
     if (n == 0) {
       std::cout << "\nAFTER FIRST TIMESTEP\n";
+      std::cout << std::scientific << std::setprecision(4);
       for (size_t i = 2; i < std::min((size_t)10, nz); i++) {
         double rho = grid(i,2, 0);
         double u = grid(i,2, 1) / rho;

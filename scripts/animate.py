@@ -46,9 +46,9 @@ def lims(arr_list):
 outdir = input("Output directory: ").strip()
 
 meta = read_meta(outdir)
-xmin, xmax = meta['xmin'], meta['xmax']
-ymin, ymax = meta['ymin'], meta['ymax']
-nx, ny     = int(meta['Nx']), int(meta['Ny'])
+xmin, xmax = meta['zmin'], meta['zmax']
+ymin, ymax = meta['rmin'], meta['rmax']
+nx, ny     = int(meta['Nz']), int(meta['Nr'])
 gamma      = meta['gamma']
 
 

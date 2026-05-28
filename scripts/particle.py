@@ -9,10 +9,10 @@ def read_particle_bin(filepath):
     dt_struct = np.dtype([
         ('n', 'i4'),
         ('t', 'f8'),
-        ('x', 'f8'),
-        ('y', 'f8'),
-        ('vx', 'f8'),
-        ('vy', 'f8')
+        ('z', 'f8'),
+        ('r', 'f8'),
+        ('vz', 'f8'),
+        ('vr', 'f8')
     ])
     
     # Read the data into a structured array
@@ -38,7 +38,7 @@ def read_meta(outdir):
     return meta
 
 # Execution
-outdir = "./100mikron"
+outdir = input("Output directory: ").strip()
 meta = read_meta(outdir)
 data = read_particle_bin(os.path.join(outdir, "particle.bin"))
 
@@ -46,8 +46,8 @@ data = read_particle_bin(os.path.join(outdir, "particle.bin"))
 # Simulated time in years
 print(data.shape)
 t_yr = data['t'] / (60 * 60 * 24 * 365)
-x = data["x"]/meta["H_iso"]
-vx = data['vx']/np.sqrt(meta["cs_iso"])
+x = data["z"]/meta["H_iso"]
+vx = data['vz']/np.sqrt(meta["cs_iso"])
 
 # Plotting
 print(f"Latest simulation time: {t_yr[-1]:.2f} years")

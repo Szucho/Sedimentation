@@ -49,6 +49,13 @@ static Primitive_Vals QtoPrim(const Vector& Q, double gamma){
 }
 
 
+//Jacobi struct
+struct HLLCJac {
+  Matrix dF_dUl{4, 4, 0.0};
+  Matrix dF_dUr{4, 4, 0.0};
+};
+
+
 //flux in the x direction - Toro chapter 10
 static Vector q1Flux(const Vector&Q, double gamma){
   Primitive_Vals q = QtoPrim(Q, gamma);
@@ -111,4 +118,12 @@ Vector q1Flux(const Vector& Q, double gamma);
 Vector q2Flux(const Vector& Q, double gamma);
 Vector Fluxhllc_q1(const Vector& QL, const Vector& QR, double gamma);
 Vector Fluxhllc_q2(const Vector& QL, const Vector& QR, double gamma);
+
+HLLCJac hllc_jacobian_q1(const Vector& QL, const Vector& QR, double gamma);
+HLLCJac hllc_jacobian_q2(const Vector& QL, const Vector& QR, double gamma);
+
+void block_thomas(std::vector<Matrix>& A, std::vector<Matrix>& D, std::vector<Matrix>& C,
+                  std::vector<Vector>& rhs, size_t N, std::vector<Matrix>& LU_work, 
+                  std::vector<std::vector<int>>& piv_work);
+
 #endif // HLLC_H

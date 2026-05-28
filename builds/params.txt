@@ -1,7 +1,7 @@
 # params.txt
 
 # Grid
-Nz      100
+Nz      1000
 Nr      5
 Nt      1000
 t0      0.0
