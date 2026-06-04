@@ -13,9 +13,8 @@
   The Toro book uses SK instead of lambdas, but to stay consistent with the FSM lecture notation
   I will use lambda_{m}, lambda_{0} and lambda_{+} instead.
 
-  MODIFIED 24.04.2026:
-  Added well balanced HLLC flux 
-  - 02.05.2026 I opted not to use it as I have a better implementation in main following Käppeli et al. 2016
+  MODIFIED 28.05.2026
+  - added implicit implementation
 */
 
 using namespace VecOps; //vector operation namespace for std::vector<double> in matrix.h

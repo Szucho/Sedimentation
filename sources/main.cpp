@@ -42,6 +42,10 @@ constexpr double m_p = 1.672622e-24;  //g
   - added io.h that handles in- / output (file writing etc.)
   - tested well balanced method on particle sedimentation - the whole LE scheme is working properly
   - added heat diffusion TO DO: modify io.h to require kappa, test it
+
+ MODIFIED 10.05 (maybe) - 28.05.2026
+  - added logarithmic writing
+  - implemented and tested the implicit + well-balanced B2 method found in Batten et al. 1997
 */
 
 
@@ -753,7 +757,7 @@ int main(int argc, char*argv[]){
   auto particlefile = openParticleFile(par.outdir);
   double t = t0;
 
-  double write_fact = 1.1;
+  double write_fact = 1.0;
   int next_save = 1;
 
 
