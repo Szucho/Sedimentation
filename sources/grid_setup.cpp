@@ -67,7 +67,7 @@ void applyHydrostaticOpenBC(Grid& grid, size_t i_ghost, size_t i_phys, size_t j,
 
 
 
-void applyBC(Grid& grid, const GridBC& bc, double Omega, double cs2, double gamma, double dz) {
+void applyBC(Grid& grid, const GridBC& bc, double Omega, double cs2, double gamma, double dz, double zmin) {
   validateBC(bc); //check if Periodic BC was used correctly
   size_t Nz = grid.rows() - 4; //ghost points not included
   size_t Nr = grid.cols() - 4;
@@ -78,11 +78,11 @@ void applyBC(Grid& grid, const GridBC& bc, double Omega, double cs2, double gamm
   for (size_t j = 0; j < grid.cols(); ++j) {
     switch (bc.left.type) {
       case BCType::Open:{
-        double z_p =  0.5 * dz; 
+        double z_p =  zmin + 0.5 * dz; 
         double z_g1 = z_p - dz;       //i = 1
         double z_g0 = z_p - 2.0 * dz; //i = 0
         applyHydrostaticOpenBC(grid, 1, 2, j, z_g1, z_p, Omega, cs2, gamma);
-        applyHydrostaticOpenBC(grid, 0, 1, j, z_g0, z_p, Omega, cs2, gamma);
+        applyHydrostaticOpenBC(grid, 0, 1, j, z_g0, z_g1, Omega, cs2, gamma);
         break;
       }
       case BCType::Closed:
@@ -103,11 +103,11 @@ void applyBC(Grid& grid, const GridBC& bc, double Omega, double cs2, double gamm
   for (size_t j = 0; j < grid.cols(); ++j) {
     switch (bc.right.type) {
       case BCType::Open:{
-        double z_p = (Nz + 1 - 2) * dz + 0.5 * dz; //last phys cell (Nz+1)
+        double z_p = zmin + (Nz + 1 - 2) * dz + 0.5 * dz; //last phys cell (Nz+1)
         double z_g2 = z_p + dz;       //i = Nz+2
         double z_g3 = z_p + 2.0 * dz; //i = Nz+3
         applyHydrostaticOpenBC(grid, Nz+2, Nz+1, j, z_g2, z_p, Omega, cs2, gamma);
-        applyHydrostaticOpenBC(grid, Nz+3, Nz+1, j, z_g3, z_p, Omega, cs2, gamma);
+        applyHydrostaticOpenBC(grid, Nz+3, Nz+1, j, z_g3, z_g2, Omega, cs2, gamma);
         break;
       }
       case BCType::Closed:

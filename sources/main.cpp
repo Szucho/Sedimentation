@@ -651,7 +651,7 @@ Grid implicit_step_B2(const Grid& grid, const Grid& S_grid,
   Grid U_bar = implicit_step_B1(grid,  S_empty, zmin, dz, dr, dt/2.0,
                                 gamma, Omega, mu, kappa_func);
   
-  applyBC(U_bar, bc, Omega, cs2, gamma, dz);
+  applyBC(U_bar, bc, Omega, cs2, gamma, dz, zmin);
   
     Grid dU2   = implicit_step_B1(U_bar, S_empty, zmin, dz, dr, dt,
                                 gamma, Omega, mu, kappa_func);
@@ -711,7 +711,7 @@ int main(int argc, char*argv[]){
   size_t nr = (size_t)Nr + 4;
   Grid grid(nz, nr);
   init_cond(grid, par);
-  applyBC(grid, bc, Omega, cs2, gamma, dz);
+  applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
 
   //d: effective cross section
   double d = 1.0;
@@ -757,7 +757,7 @@ int main(int argc, char*argv[]){
   auto particlefile = openParticleFile(par.outdir);
   double t = t0;
 
-  double write_fact = 1.0;
+  double write_fact = 1;
   int next_save = 1;
 
 
@@ -773,7 +773,7 @@ int main(int argc, char*argv[]){
 
     if (n>=next_save){
       writeParticle(particlefile, p, t, n);
-      // particlefile.flush(); //DEBUG
+      particlefile.flush(); //DEBUG
       // writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
       int current_next = next_save;
       next_save = static_cast<int>(current_next*write_fact);
@@ -787,7 +787,7 @@ int main(int argc, char*argv[]){
     }
 
 
-    applyBC(grid, bc, Omega, cs2, gamma, dz);
+    applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
     if (n == 0) {
     std::cout << "ghost i="<< nz-2 <<": rho=" << grid(nz-2,2, 0) 
               << " rhou=" << grid(nz-2,2, 1) <<std::endl;
@@ -804,7 +804,7 @@ int main(int argc, char*argv[]){
         Grid S_grid(nz, nr);
         source_projection(S_grid, p, gas_new, W_new, dz, dr, dt, gamma);
         grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
-        applyBC(grid, bc, Omega, cs2, gamma, dz);
+        applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
 
         CICWeights W_np1 = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
         GasAtParticle gas_np1 = interpolate_gas(grid, W_np1, gamma);
@@ -812,12 +812,12 @@ int main(int argc, char*argv[]){
       } else {
         Grid S_grid(nz, nr);
         grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
-        applyBC(grid, bc, Omega, cs2, gamma, dz);
+        applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
       }
     } else {
       Grid S_grid(nz, nr);  //empty source, just advance gas
       grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
-      applyBC(grid, bc, Omega, cs2, gamma, dz);
+      applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
     }
     if (n == 0) {
       std::cout << "\nAFTER FIRST TIMESTEP\n";

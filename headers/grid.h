@@ -108,6 +108,6 @@ inline Cell VecToCell(const Vector& v) {
 //defined in grid_setup.cpp
 void validateBC(const GridBC& bc); //validateBC checks if Periodic BC was set correctly
 // void applyBC(Grid& grid, const GridBC& bc); //applies BC type at chosen wall
-void applyBC(Grid& grid, const GridBC& bc, double Omega, double cs2, double gamma, double dx);
+void applyBC(Grid& grid, const GridBC& bc, double Omega, double cs2, double gamma, double dz, double zmin);
 
 #endif // GRID_H

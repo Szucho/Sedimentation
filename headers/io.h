@@ -211,7 +211,7 @@ inline Particle initParticle(const SimParams& par) {
   p.vr     = par.pvr0;
   p.mass   = par.pmass;
   p.radius = par.pradius;
-  p.active = true;
+  p.active = false;
   return p;
 }
 

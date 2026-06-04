@@ -1,9 +1,9 @@
-zmin 0
-zmax 3e+12
-rmin 0
-rmax 2.24397e+13
+zmin 2.6e+12
+zmax 2.6e+12
+rmin 1.49598e+13
+rmax 1.49598e+13
 gamma 1.4
-Nz 500
+Nz 100
 Nr 5
 cs_iso 5.35728e+09
 H_iso 5.2e+11
