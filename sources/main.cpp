@@ -774,7 +774,8 @@ int main(int argc, char*argv[]){
     if (n>=next_save){
       writeParticle(particlefile, p, t, n);
       particlefile.flush(); //DEBUG
-      // writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
+      writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
+      gridfile.flush();
       int current_next = next_save;
       next_save = static_cast<int>(current_next*write_fact);
       if(next_save<=current_next){

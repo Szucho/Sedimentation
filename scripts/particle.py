@@ -12,7 +12,8 @@ def read_particle_bin(filepath):
         ('z', 'f8'),
         ('r', 'f8'),
         ('vz', 'f8'),
-        ('vr', 'f8')
+        ('vr', 'f8'),
+        ('actove', 'i4')
     ])
     
     # Read the data into a structured array

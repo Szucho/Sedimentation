@@ -234,6 +234,7 @@ inline void writeMetadata(const std::string& outdir, const SimParams& par) {
   std::string path = outdir + "/meta.txt";
   std::ofstream f(path);
   if (!f) throw std::runtime_error("Cannot open meta.txt: " + path);
+  f << std::setprecision(17) << std::scientific;
   f << "zmin "  << par.zmin  << "\n"
     << "zmax "  << par.zmax  << "\n"
     << "rmin "  << par.rmin  << "\n"
@@ -284,4 +285,7 @@ inline void writeParticle(std::ofstream& f, const Particle& p, double t, int n) 
   f.write(reinterpret_cast<const char*>(&p.r), sizeof(double));
   f.write(reinterpret_cast<const char*>(&p.vz), sizeof(double));
   f.write(reinterpret_cast<const char*>(&p.vr), sizeof(double));
+
+  int active_val = p.active ? 1:0;
+  f.write(reinterpret_cast<const char*>(&active_val), sizeof(int));
 }
