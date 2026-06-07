@@ -197,11 +197,9 @@ bool leapfrog_first_half(Particle& p,
 
   // implicit drag half-kick: v* = (v + (g + u_gas/t_stop)*dt/2) / (1 + dt/(2*t_stop))
   double factor = 1.0 / (1.0 + 0.5 * dt / t_stop);
-  p.vz += 0.5 * g_z * dt;
-  p.vr += 0.5 * g_r * dt;
 
-  p.vz = (p.vz + gas.u / t_stop * 0.5 * dt) * factor;
-  p.vr = (p.vr + gas.v / t_stop * 0.5 * dt) * factor;
+  p.vz = (p.vz + (g_z + gas.u / t_stop) * 0.5 * dt) * factor;
+  p.vr = (p.vr + (g_r + gas.v / t_stop) * 0.5 * dt) * factor;
 
   // drift
   p.z += p.vz * dt;

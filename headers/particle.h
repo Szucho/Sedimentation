@@ -25,6 +25,7 @@ struct Particle {
   double mass;   //total mass of the solid chondrite particle
   double radius; //it will be a circle
   bool active=true;
+  //id
 };
 
 struct GasAtParticle {

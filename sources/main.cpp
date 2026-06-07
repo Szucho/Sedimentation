@@ -1,5 +1,7 @@
 #include <cmath>
+#include <ios>
 #include <iostream>
+#include <stdexcept>
 #include "../headers/matrix.h"
 #include "../headers/grid.h"
 #include "../headers/HLLC.h"
@@ -404,11 +406,22 @@ Grid compute_residual(const Grid& grid,
       Vector QR_iph = Qip1 - 0.5*dz*sigma_ip1_z;
 
       //well balanced - Käppeli et al. 2016
-      Primitive_Vals prim_im2 = QtoPrim(Qim2, gamma);
-      Primitive_Vals prim_im1 = QtoPrim(Qim1, gamma);
-      Primitive_Vals prim_i   = QtoPrim(Qi,   gamma);
-      Primitive_Vals prim_ip1 = QtoPrim(Qip1, gamma);
-      Primitive_Vals prim_ip2 = QtoPrim(Qip2, gamma);
+      Primitive_Vals prim_im2, prim_im1, prim_i, prim_ip1, prim_ip2;
+      try {
+          prim_im2 = QtoPrim(Qim2, gamma);
+          prim_im1 = QtoPrim(Qim1, gamma);
+          prim_i   = QtoPrim(Qi,   gamma);
+          prim_ip1 = QtoPrim(Qip1, gamma);
+          prim_ip2 = QtoPrim(Qip2, gamma);
+      } catch (const std::invalid_argument& e) {
+          std::cerr << "[QtoPrim FAIL] cell=(" << i << "," << j << ")"
+                    << "  Qim2=[" << Qim2[0] <<","<< Qim2[3] << "]"
+                    << "  Qim1=[" << Qim1[0] <<","<< Qim1[3] << "]"
+                    << "  Qi  =[" << Qi[0]   <<","<< Qi[3]   << "]"
+                    << "  Qip1=[" << Qip1[0] <<","<< Qip1[3] << "]"
+                    << "  Qip2=[" << Qip2[0] <<","<< Qip2[3] << "]\n";
+          throw;
+      }
 
       //phi(x) = 1/2*Omega^2 x^2
       double p0_at_imh = prim_i.p + 0.5*prim_i.rho*(0.5*Omega*Omega*(z_i*z_i - z_im1*z_im1)); 
@@ -760,83 +773,101 @@ int main(int argc, char*argv[]){
   double write_fact = 1;
   int next_save = 1;
 
+  int print_interval = (int)Nt/10;
+  if (print_interval==0) print_interval = 1;
+  int n=0;
+  try{
+    for (; n<(int)Nt; n++){
+      t = t0 + n*dt;
 
-  for (int n = 0; n<(int)Nt; n++){
-    t = t0 + n*dt;
-
-    if (n % 5000 == 0) {
-      double progress = (double)n / Nt * 100.0;
-      std::cout << "Step: " << n << " / " << (int)Nt 
-                << " [" << std::fixed << std::setprecision(2) << progress << "%] "
-                << "t = " << t << std::endl; 
-    }
-
-    if (n>=next_save){
-      writeParticle(particlefile, p, t, n);
-      particlefile.flush(); //DEBUG
-      writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
-      gridfile.flush();
-      int current_next = next_save;
-      next_save = static_cast<int>(current_next*write_fact);
-      if(next_save<=current_next){
-        next_save = current_next+1;
+      // if (n % 5000 == 0) {
+      //   double progress = (double)n / Nt * 100.0;
+      //   std::cout << "Step: " << n << " / " << (int)Nt 
+      //             << " [" << std::fixed << std::setprecision(2) << progress << "%] "
+      //             << "t = " << t << std::endl; 
+      // }
+      if (n%print_interval == 0 || n == (int)Nt-1){
+        double progress = (double)n/((int)Nt-1)*100.0;
+        std::cout << "Step: " << n << " / " << (int)Nt
+                  << " [" << std::fixed << std::setprecision(2) << progress << "%] "
+                  << "t = " << t << std::endl;
       }
-      if (next_save <=n){
-        next_save = n+1;
+
+      if(n%10==0){
+        writeParticle(particlefile, p, t, n);
+        writeFrame(gridfile, grid,  t, (size_t)Nz, (size_t)Nr);
       }
-      // std::cout << "Saved step " << n << ". Next target step: " << next_save << std::endl;
-    }
+
+      // if (n>=next_save){
+      //   writeParticle(particlefile, p, t, n);
+      //   particlefile.flush(); //DEBUG
+      //   writeFrame(gridfile, grid, t, (size_t)Nz, (size_t)Nr);
+      //   gridfile.flush();
+      //   int current_next = next_save;
+      //   next_save = static_cast<int>(current_next*write_fact);
+      //   if(next_save<=current_next){
+      //     next_save = current_next+1;
+      //   }
+      //   if (next_save <=n){
+      //     next_save = n+1;
+      //   }
+      //   // std::cout << "Saved step " << n << ". Next target step: " << next_save << std::endl;
+      // }
 
 
-    applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
-    if (n == 0) {
-    std::cout << "ghost i="<< nz-2 <<": rho=" << grid(nz-2,2, 0) 
-              << " rhou=" << grid(nz-2,2, 1) <<std::endl;
-    }
-
-    if (p.active){
-      CICWeights W = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
-      GasAtParticle gas = interpolate_gas(grid, W, gamma);
-      
-      if(leapfrog_first_half(p, gas, Omega, zmin, rmin, zmax, rmax, dz, dr, (int)Nz, (int)Nr, dt)){
-        CICWeights W_new = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
-        GasAtParticle gas_new = interpolate_gas(grid, W_new, gamma);
-
-        Grid S_grid(nz, nr);
-        source_projection(S_grid, p, gas_new, W_new, dz, dr, dt, gamma);
-        grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
-        applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
-
-        CICWeights W_np1 = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
-        GasAtParticle gas_np1 = interpolate_gas(grid, W_np1, gamma);
-        leapfrog_second_half(p, gas_np1, Omega, dt);
-      } else {
-        Grid S_grid(nz, nr);
-        grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
-        applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
-      }
-    } else {
-      Grid S_grid(nz, nr);  //empty source, just advance gas
-      grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
       applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
-    }
-    if (n == 0) {
-      std::cout << "\nAFTER FIRST TIMESTEP\n";
-      std::cout << std::scientific << std::setprecision(4);
-      for (size_t i = 2; i < std::min((size_t)10, nz); i++) {
-        double rho = grid(i,2, 0);
-        double u = grid(i,2, 1) / rho;
-        double p = (gamma-1.0)*(grid(i,2,3) - 0.5*rho*u*u);
-        std::cout << "i=" << i << " : rho=" << rho << " u=" << u << " p=" << p << std::endl;
+      // if (n == 0) {
+      // std::cout << "ghost i="<< nz-2 <<": rho=" << grid(nz-2,2, 0) 
+      //           << " rhou=" << grid(nz-2,2, 1) <<std::endl;
+      // }
+
+      if (p.active){
+        CICWeights W = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
+        GasAtParticle gas = interpolate_gas(grid, W, gamma);
+        
+        if(leapfrog_first_half(p, gas, Omega, zmin, rmin, zmax, rmax, dz, dr, (int)Nz, (int)Nr, dt)){
+          CICWeights W_new = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
+          GasAtParticle gas_new = interpolate_gas(grid, W_new, gamma);
+
+          Grid S_grid(nz, nr);
+          source_projection(S_grid, p, gas_new, W_new, dz, dr, dt, gamma);
+          grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
+          applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
+
+          CICWeights W_np1 = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
+          GasAtParticle gas_np1 = interpolate_gas(grid, W_np1, gamma);
+          leapfrog_second_half(p, gas_np1, Omega, dt);
+        } else {
+          Grid S_grid(nz, nr);
+          grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
+          applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
+        }
+      } else {
+        Grid S_grid(nz, nr);  //empty source, just advance gas
+        grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);
+        applyBC(grid, bc, Omega, cs2, gamma, dz, zmin);
       }
-      std::cout << "i=" << nz-4 << " : rho=" << grid(nz-4,2,0) << " u=" << grid(nz-4,2,1)/grid(nz-4,2,0)<<
-        " p="<<(gamma-1.0)*(grid(nz-4, 2, 3)-0.5*grid(nz-4,2,1)*grid(nz-4,2,1)/grid(nz-4,2,0))<<std::endl;
-      std::cout << "i=" << nz-3 << " : rho=" << grid(nz-3,2,0) << " u=" << grid(nz-3,2,1)/grid(nz-3,2,0)<<
-        " p="<<(gamma-1.0)*(grid(nz-3, 2, 3)-0.5*grid(nz-3,2,1)*grid(nz-4,2,1)/grid(nz-3,2,0))<<std::endl;
-      std::cout << "i=" << nz-2 << " : rho=" << grid(nz-2,2,0) << " u=" << grid(nz-2,2,1)/grid(nz-2,2,0)<<
-        " p="<<(gamma-1.0)*(grid(nz-2, 2, 3)-0.5*grid(nz-2,2,1)*grid(nz-2,2,1)/grid(nz-2,2,0))<<std::endl;
-      std::cout << ".........................\n"<<std::endl;
+      if (n == 0) {
+        std::cout << "\nAFTER FIRST TIMESTEP\n";
+        std::cout << std::scientific << std::setprecision(4);
+        for (size_t i = 2; i < std::min((size_t)10, nz); i++) {
+          double rho = grid(i,2, 0);
+          double u = grid(i,2, 1) / rho;
+          double p = (gamma-1.0)*(grid(i,2,3) - 0.5*rho*u*u);
+          std::cout << "i=" << i << " : rho=" << rho << " u=" << u << " p=" << p << std::endl;
+        }
+        std::cout << "i=" << nz-4 << " : rho=" << grid(nz-4,2,0) << " u=" << grid(nz-4,2,1)/grid(nz-4,2,0)<<
+          " p="<<(gamma-1.0)*(grid(nz-4, 2, 3)-0.5*grid(nz-4,2,1)*grid(nz-4,2,1)/grid(nz-4,2,0))<<std::endl;
+        std::cout << "i=" << nz-3 << " : rho=" << grid(nz-3,2,0) << " u=" << grid(nz-3,2,1)/grid(nz-3,2,0)<<
+          " p="<<(gamma-1.0)*(grid(nz-3, 2, 3)-0.5*grid(nz-3,2,1)*grid(nz-4,2,1)/grid(nz-3,2,0))<<std::endl;
+        std::cout << "i=" << nz-2 << " : rho=" << grid(nz-2,2,0) << " u=" << grid(nz-2,2,1)/grid(nz-2,2,0)<<
+          " p="<<(gamma-1.0)*(grid(nz-2, 2, 3)-0.5*grid(nz-2,2,1)*grid(nz-2,2,1)/grid(nz-2,2,0))<<std::endl;
+        std::cout << ".........................\n"<<std::endl;
+      }
     }
+  } catch (const std::invalid_argument& e){
+    std::cerr << "[CRASH] at step=" <<n<<" t="<<t<<std::endl;
+    throw;
   }
   
   return 0;
