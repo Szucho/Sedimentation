@@ -1,4 +1,5 @@
 #include <cmath>
+#include <stdexcept>
 #include "../headers/matrix.h"
 #include "../headers/HLLC.h"
 
@@ -94,8 +95,16 @@ static Matrix euler_jac_q1(double u, double v, double E, double p, double rho, d
 HLLCJac hllc_jacobian_q1(const Vector& QL, const Vector& QR, double gamma) {
 
   
-  Primitive_Vals primL = QtoPrim(QL, gamma);
-  Primitive_Vals primR = QtoPrim(QR, gamma);
+  Primitive_Vals primL, primR;
+  try{
+    primL = QtoPrim(QL, gamma);
+    primR = QtoPrim(QR, gamma);
+  } catch (std::invalid_argument& e){
+    std::cerr << "[hllc_jacobian_q1 FAIL]\n"
+              << "  QL=[" << QL[0] <<","<< QL[1] <<","<< QL[2] <<","<< QL[3] << "]\n"
+              << "  QR=[" << QR[0] <<","<< QR[1] <<","<< QR[2] <<","<< QR[3] << "]\n";
+    throw;
+  }
   
   double rhoL = primL.rho;
   double uL   = primL.u;
