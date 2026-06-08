@@ -47,8 +47,8 @@ data = read_particle_bin(os.path.join(outdir, "particle.bin"))
 # Simulated time in years
 print(data.shape)
 t_yr = data['t'] / (60 * 60 * 24 * 365)
-x = data["z"]/meta["H_iso"]
-vx = data['vz']/np.sqrt(meta["cs_iso"])
+z = data["z"]/meta["H_iso"]
+vz = data['vz']/np.sqrt(meta["cs_iso"])
 
 # Plotting
 print(f"Latest simulation time: {t_yr[-1]:.2f} years")
@@ -56,14 +56,14 @@ print(f"Latest simulation time: {t_yr[-1]:.2f} years")
 fig, ax1 = plt.subplots(figsize=(10, 7))
 
 # Axis 1: Position (Left)
-ax1.plot(t_yr, x, 'k-', label=r'$z : s_0 = 1e-2$')
+ax1.plot(t_yr, z, 'k-', label=r'$z : s_0 = 1e-2$')
 ax1.set_xlabel('t [yr]', fontsize=12)
 ax1.set_ylabel(r'$z/H_1$', fontsize=12)
 ax1.set_xscale('log')
 
 # Axis 2: Velocity (Right)
 ax2 = ax1.twinx()
-ax2.plot(t_yr, vx, 'k--', label=r'$v : s_0 = 1e-2$')
+ax2.plot(t_yr, vz, 'k--', label=r'$v : s_0 = 1e-2$')
 ax2.set_ylabel(r'$v/c_s$', fontsize=12)
 
 # Grid and Legend

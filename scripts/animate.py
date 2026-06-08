@@ -97,36 +97,40 @@ else:
     print("No particle.bin found, skipping particle overlay")
 
 
+rho_base = prims[0][0]
 #color lim of primitive vals
-rho_lim = lims([p[0] for p in prims])
+log_rho_ratios = [np.log10(p[0]/rho_base) for p in prims]
+rho_lim = lims(log_rho_ratios)
+# rho_lim = lims([p[0] for p in prims])
 u_lim   = lims([p[1] for p in prims])
 v_lim   = lims([p[2] for p in prims])
 p_lim   = lims([p[3] for p in prims])
 
 #figure
-fig, axes = plt.subplots(2, 2, figsize=(12, 7))
+fig, axes = plt.subplots(2, 2, figsize=(8, 8))
 fig.subplots_adjust(hspace=0.4, wspace=0.35)
 
-titles = [r"Density  $\rho$", r"$x$-velocity  $u$", r"$y$-velocity  $v$", r"Pressure  $p$"]
+titles = [r"Relative density  $\log(\rho/\rho_0)$", r"$x$-velocity  $u$", r"$y$-velocity  $v$", r"Pressure  $p$"]
 clims  = [rho_lim, u_lim, v_lim, p_lim]
 cmaps  = ["inferno", "RdBu_r", "RdBu_r", "viridis"]
 
-x_ticks = np.linspace(0, nz, 5)
-x_labels = [f"{zmin + v*(zmax-zmin)/nz:.2g}" for v in x_ticks]
-y_ticks  = np.linspace(0, nr, 3)
-y_labels = [f"{rmin + v*(rmax-rmin)/nr:.2g}" for v in y_ticks]
+y_ticks = np.linspace(0, nz, 5)
+y_labels = [f"{zmin + v*(zmax-zmin)/nz:.2g}" for v in y_ticks]
+x_ticks  = np.linspace(0, nr, 3)
+x_labels = [f"{rmin + v*(rmax-rmin)/nr:.2g}" for v in x_ticks]
 
 rho0, u0, v0, p0 = prims[0]
+rho0_log = np.log10(rho0 / rho_base)
 meshes = []
 p_dots = []
 
-for ax, field, title, clim, cmap in zip(axes.flat, [rho0,u0,v0,p0], titles, clims, cmaps):
-    mesh = ax.pcolormesh(field.T, cmap=cmap, vmin=clim[0], vmax=clim[1], shading='auto')
+for ax, field, title, clim, cmap in zip(axes.flat, [rho0_log,u0,v0,p0], titles, clims, cmaps):
+    mesh = ax.pcolormesh(field, cmap=cmap, vmin=clim[0], vmax=clim[1], shading='auto')
     fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title(title, fontsize=11)
     ax.set_xticks(x_ticks); ax.set_xticklabels(x_labels, fontsize=7)
     ax.set_yticks(y_ticks); ax.set_yticklabels(y_labels, fontsize=7)
-    ax.set_xlabel("z"); ax.set_ylabel("r")
+    ax.set_xlabel("r"); ax.set_ylabel("z")
     meshes.append(mesh)
     if has_particle:
         dot, = ax.plot([], [], 'w+', ms=8, mew=1.5)
@@ -140,16 +144,17 @@ part_times = part_df['t'].values
 #update
 def update(n):
     rho, u, v, p = prims[n]
-    for mesh, field in zip(meshes, [rho, u, v, p]):
-        mesh.set_array(field.T.ravel())
+    rho_log = np.log10(rho/rho_base)
+    for mesh, field in zip(meshes, [rho_log, u, v, p]):
+        mesh.set_array(field.ravel())
     suptitle.set_text(f"t = {times[n]:.4f}")
     if has_particle:
         current_t = times[n]
         idx = np.argmin(np.abs(part_times - current_t))
         row = part_df.iloc[idx]
         if row['active']:
-            px = (row['z'] - zmin) / (zmax - zmin) * nz
-            py = (row['r'] - rmin) / (rmax - rmin) * nr
+            py = (row['z'] - zmin) / (zmax - zmin) * nz
+            px = (row['r'] - rmin) / (rmax - rmin) * nr
             for dot in p_dots:
                 dot.set_data([px], [py])
         else:
