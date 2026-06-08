@@ -2,6 +2,7 @@
 #include <ios>
 #include <iostream>
 #include <stdexcept>
+#include <chrono>
 #include "../headers/matrix.h"
 #include "../headers/grid.h"
 #include "../headers/HLLC.h"
@@ -695,6 +696,11 @@ double kappa(double mu, double d, double T){
 
 
 int main(int argc, char*argv[]){
+  using std::chrono::high_resolution_clock;
+  using std::chrono::duration_cast;
+  using std::chrono::duration;
+  using std::chrono::milliseconds;
+  auto t1 = high_resolution_clock::now();
 
   std::string paramfile = (argc > 1) ? argv[1] : "params.txt";
   SimParams par = readParams(paramfile);
@@ -870,5 +876,10 @@ int main(int argc, char*argv[]){
     throw;
   }
   
+  auto t2 = high_resolution_clock::now();
+  auto ms_int = duration_cast<milliseconds>(t2 - t1);
+  duration<double, std::milli> ms_double = t2 - t1;
+  std::cout << ms_int.count() << "ms\n";
+  std::cout << ms_double.count() << "ms\n";
   return 0;
 }
