@@ -2,8 +2,8 @@
 
 # Grid
 Nz      300
-Nr      5
-Nt      1000
+Nr      15
+Nt      2500
 t0      0.0
 tf      300
 zmin    2.5999999899901e12
@@ -37,6 +37,7 @@ particle_r      1.49597871e13
 particle_vz     0.0
 particle_vr     0.0
 particle_mass   0.000012566
+particle_T      150
 particle_radius 1e-2
 
 # Output

@@ -831,7 +831,7 @@ int main(int argc, char*argv[]){
         CICWeights W = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
         GasAtParticle gas = interpolate_gas(grid, W, gamma);
         
-        if(leapfrog_first_half(p, gas, Omega, zmin, rmin, zmax, rmax, dz, dr, (int)Nz, (int)Nr, dt)){
+        if(leapfrog_first_half(p, gas, Omega, zmin, rmin, zmax, rmax, dz, dr, (int)Nz, (int)Nr, dt, mu)){
           CICWeights W_new = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
           GasAtParticle gas_new = interpolate_gas(grid, W_new, gamma);
 
@@ -842,7 +842,7 @@ int main(int argc, char*argv[]){
 
           CICWeights W_np1 = calc_CIC(p.z, p.r, zmin, rmin, dz, dr, (int)Nz, (int)Nr);
           GasAtParticle gas_np1 = interpolate_gas(grid, W_np1, gamma);
-          leapfrog_second_half(p, gas_np1, Omega, dt);
+          leapfrog_second_half(p, gas_np1, Omega, dt, mu);
         } else {
           Grid S_grid(nz, nr);
           grid = implicit_step_B2(grid, S_grid, bc, cs2, zmin, dz, dr, dt, gamma, Omega, mu, kappa_func);

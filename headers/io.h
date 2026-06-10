@@ -43,7 +43,7 @@ struct SimParams {
   std::string gas_profile;
   double gas_rho0, gas_p0, gas_u0, gas_v0, gas_mu; 
   //particle initial condition
-  double pz0, pr0, pvz0, pvr0, pmass, pradius;
+  double pz0, pr0, pvz0, pvr0, pmass, pT0, pradius;
   //output
   std::string outdir;
 };
@@ -109,6 +109,7 @@ inline SimParams readParams(const std::string& filename) {
   p.pvz0    = getd("particle_vz");
   p.pvr0    = getd("particle_vr");
   p.pmass   = getd("particle_mass");
+  p.pT0      = getd("particle_T");
   p.pradius = getd("particle_radius");
 
   //output
@@ -125,6 +126,8 @@ inline SimParams readParams(const std::string& filename) {
     throw std::invalid_argument("gas_rho0 and gas_p0 must be positive");
   if (p.pmass <= 0 || p.pradius <= 0)
     throw std::invalid_argument("particle mass and radius must be positive");
+  if (p.pT0 <= 0)
+    throw std::invalid_argument("particle temperature must be larger than zero");
 
   return p;
 }
@@ -211,6 +214,7 @@ inline Particle initParticle(const SimParams& par) {
   p.vr     = par.pvr0;
   p.mass   = par.pmass;
   p.radius = par.pradius;
+  p.T      = par.pT0;
   p.active = true;
   return p;
 }
@@ -285,6 +289,7 @@ inline void writeParticle(std::ofstream& f, const Particle& p, double t, int n) 
   f.write(reinterpret_cast<const char*>(&p.r), sizeof(double));
   f.write(reinterpret_cast<const char*>(&p.vz), sizeof(double));
   f.write(reinterpret_cast<const char*>(&p.vr), sizeof(double));
+  f.write(reinterpret_cast<const char*>(&p.T), sizeof(double));
 
   int active_val = p.active ? 1:0;
   f.write(reinterpret_cast<const char*>(&active_val), sizeof(int));

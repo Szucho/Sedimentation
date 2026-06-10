@@ -24,6 +24,7 @@ struct Particle {
   double vz, vr; //velocities
   double mass;   //total mass of the solid chondrite particle
   double radius; //it will be a circle
+  double T;
   bool active=true;
   //id
 };
@@ -58,12 +59,12 @@ bool leapfrog_first_half(Particle& p,
                          double zmax, double rmax,
                          double dz, double dr,
                          int nz, int nr,
-                         double dt);
+                         double dt, double mu);
 
 void leapfrog_second_half(Particle& p,
                           const GasAtParticle& gas_new,
                           double Omega,
-                          double dt);
+                          double dt, double mu);
 
 
 

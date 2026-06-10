@@ -4,6 +4,10 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
+k_B = 1.380649e-16
+m_p = 1.672622e-24
+mu  = 2.4
+
 
 def read_meta(outdir):
     meta = {}
@@ -43,6 +47,7 @@ def read_particle_bin(filepath):
         ('r', 'f8'),
         ('vz', 'f8'),
         ('vr', 'f8'),
+        ('T', 'f8'),
         ('active', 'i4')
     ])
     if os.path.exists(filepath):
@@ -56,7 +61,8 @@ def compute_primitives(data, gamma=1.4):
     v   = data[:,:,2] / rho
     E   = data[:,:,3]
     p   = (gamma - 1.0) * (E - 0.5 * rho * (u**2 + v**2))
-    return rho, u, v, p
+    T   = p * m_p * mu / (rho * k_B)
+    return rho, u, v, p, T
 
 #color lims
 def lims(arr_list):
@@ -103,15 +109,15 @@ log_rho_ratios = [np.log10(p[0]/rho_base) for p in prims]
 rho_lim = lims(log_rho_ratios)
 # rho_lim = lims([p[0] for p in prims])
 u_lim   = lims([p[1] for p in prims])
-v_lim   = lims([p[2] for p in prims])
+T_lim   = lims([p[4] for p in prims])
 p_lim   = lims([p[3] for p in prims])
 
 #figure
 fig, axes = plt.subplots(2, 2, figsize=(8, 8))
 fig.subplots_adjust(hspace=0.4, wspace=0.35)
 
-titles = [r"Relative density  $\log(\rho/\rho_0)$", r"$x$-velocity  $u$", r"$y$-velocity  $v$", r"Pressure  $p$"]
-clims  = [rho_lim, u_lim, v_lim, p_lim]
+titles = [r"Relative density  $\log(\rho/\rho_0)$", r"$x$-velocity  $u$", r"$T$", r"Pressure  $p$"]
+clims  = [rho_lim, u_lim, T_lim, p_lim]
 cmaps  = ["inferno", "RdBu_r", "RdBu_r", "viridis"]
 
 y_ticks = np.linspace(0, nz, 5)
@@ -119,12 +125,12 @@ y_labels = [f"{zmin + v*(zmax-zmin)/nz:.2g}" for v in y_ticks]
 x_ticks  = np.linspace(0, nr, 3)
 x_labels = [f"{rmin + v*(rmax-rmin)/nr:.2g}" for v in x_ticks]
 
-rho0, u0, v0, p0 = prims[0]
+rho0, u0, v0, p0, T0 = prims[0]
 rho0_log = np.log10(rho0 / rho_base)
 meshes = []
 p_dots = []
 
-for ax, field, title, clim, cmap in zip(axes.flat, [rho0_log,u0,v0,p0], titles, clims, cmaps):
+for ax, field, title, clim, cmap in zip(axes.flat, [rho0_log,u0,T0,p0], titles, clims, cmaps):
     mesh = ax.pcolormesh(field, cmap=cmap, vmin=clim[0], vmax=clim[1], shading='auto')
     fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title(title, fontsize=11)
@@ -143,9 +149,9 @@ part_df = pd.DataFrame(part_data)
 part_times = part_df['t'].values
 #update
 def update(n):
-    rho, u, v, p = prims[n]
+    rho, u, _, p, T = prims[n]
     rho_log = np.log10(rho/rho_base)
-    for mesh, field in zip(meshes, [rho_log, u, v, p]):
+    for mesh, field in zip(meshes, [rho_log, u, T, p]):
         mesh.set_array(field.ravel())
     suptitle.set_text(f"t = {times[n]:.4f}")
     if has_particle:

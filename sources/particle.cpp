@@ -2,6 +2,14 @@
 #include <cmath>
 
 constexpr double PI = 3.141592653589793;
+constexpr double c_heat  = 8e6;       // erg/g/K
+constexpr double h_conv  = 1e3;       // erg/s/cm^2/K
+constexpr double eps_rad = 0.8;
+constexpr double sigma_SB = 5.67e-5;  // erg/s/cm^2/K^4
+constexpr double rho_m   = 3.0;       // g/cm^2
+constexpr double T_melt  = 1800.0;    // K
+constexpr double k_B = 1.380649e-16;
+constexpr double m_p = 1.672622e-24;
 
 
 //CIC weighing
@@ -186,7 +194,7 @@ bool leapfrog_first_half(Particle& p,
                          double zmax, double rmax,
                          double dz, double dr,
                          int nz, int nr,
-                         double dt) {
+                         double dt, double mu) {
 
   auto [g_z, g_r] = grav_accel(p, Omega);
   
@@ -197,11 +205,18 @@ bool leapfrog_first_half(Particle& p,
 
   // implicit drag half-kick: v* = (v + (g + u_gas/t_stop)*dt/2) / (1 + dt/(2*t_stop))
   double factor = 1.0 / (1.0 + 0.5 * dt / t_stop);
+  double A = 4.0 * PI * p.radius * p.radius; //surface area
+  double T_gas = gas.p * m_p * mu / (gas.rho * k_B);
 
   p.vz = (p.vz + (g_z + gas.u / t_stop) * 0.5 * dt) * factor;
   p.vr = (p.vr + (g_r + gas.v / t_stop) * 0.5 * dt) * factor;
 
   // drift
+  double dTdt = (vth / (c_heat * rho_m * p.radius)) * gas.rho * p.vz * p.vz;
+            // - (h_conv * A / (p.mass * c_heat)) * (p.T - T_gas)
+            // - (eps_rad * sigma_SB * A / (p.mass * c_heat)) * (std::pow(p.T, 4) - std::pow(T_gas, 4));
+
+  p.T += 0.5 * dTdt * dt;
   p.z += p.vz * dt;
   p.r += p.vr * dt;
 
@@ -215,7 +230,7 @@ bool leapfrog_first_half(Particle& p,
 void leapfrog_second_half(Particle& p,
                           const GasAtParticle& gas_new,  //gas at t_{n+1}
                           double Omega,
-                          double dt) {
+                          double dt, double mu) {
 
   auto [g_x2, g_y2] = grav_accel(p, Omega);
 
@@ -226,4 +241,12 @@ void leapfrog_second_half(Particle& p,
   double factor2 = 1.0 / (1.0 + 0.5 * dt / t_stop2);
   p.vz = (p.vz + (g_x2 + gas_new.u / t_stop2) * 0.5 * dt) * factor2;
   p.vr = (p.vr + (g_y2 + gas_new.v / t_stop2) * 0.5 * dt) * factor2;
+
+  double A     = 4.0 * PI * p.radius * p.radius;
+  double T_gas = gas_new.p * m_p * mu / (gas_new.rho * k_B);
+  double dTdt  = (vth2 / (c_heat * rho_m * p.radius)) * gas_new.rho * p.vz * p.vz;
+               // - (h_conv * A / (p.mass * c_heat)) * (p.T - T_gas)
+               // - (eps_rad * sigma_SB * A / (p.mass * c_heat))
+               //   * (std::pow(p.T, 4) - std::pow(T_gas, 4));
+  p.T += 0.5 * dTdt * dt;
 }

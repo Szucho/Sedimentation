@@ -13,7 +13,8 @@ def read_particle_bin(filepath):
         ('r', 'f8'),
         ('vz', 'f8'),
         ('vr', 'f8'),
-        ('actove', 'i4')
+        ('T', 'f8'),
+        ('active', 'i4')
     ])
     
     # Read the data into a structured array
@@ -49,6 +50,7 @@ print(data.shape)
 t_yr = data['t'] / (60 * 60 * 24 * 365)
 z = data["z"]/meta["H_iso"]
 vz = data['vz']/np.sqrt(meta["cs_iso"])
+T = data["T"]
 
 # Plotting
 print(f"Latest simulation time: {t_yr[-1]:.2f} years")
@@ -56,14 +58,14 @@ print(f"Latest simulation time: {t_yr[-1]:.2f} years")
 fig, ax1 = plt.subplots(figsize=(10, 7))
 
 # Axis 1: Position (Left)
-ax1.plot(t_yr, z, 'k-', label=r'$z : s_0 = 1e-2$')
+ax1.plot(t_yr, z, 'k-', label=r'$z: s_0 = 1e-2$cm')
 ax1.set_xlabel('t [yr]', fontsize=12)
 ax1.set_ylabel(r'$z/H_1$', fontsize=12)
 ax1.set_xscale('log')
 
 # Axis 2: Velocity (Right)
 ax2 = ax1.twinx()
-ax2.plot(t_yr, vz, 'k--', label=r'$v : s_0 = 1e-2$')
+ax2.plot(t_yr, vz, 'k--', label=r'$v: s_0 = 1e-2$cm')
 ax2.set_ylabel(r'$v/c_s$', fontsize=12)
 
 # Grid and Legend
@@ -80,4 +82,17 @@ ax1.text(0.05, 0.05, info_str, transform=ax1.transAxes, verticalalignment='botto
 
 plt.tight_layout()
 plt.savefig("particle.png", bbox_inches="tight", pad_inches=0.1, dpi=300)
+plt.show()
+
+
+fig, ax1 = plt.subplots(figsize=(5,5))
+ax1.plot(t_yr, T/T[0], "k-", label=r"$T: s_0 = 1e-2$cm")
+ax1.set_xlabel(r"t [yr]")
+ax1.set_ylabel(r"T/T_0")
+ax1.set_yscale("log")
+ax1.set_xscale("log")
+ax1.grid(ls=":", alpha=0.5)
+ax1.legend()
+plt.tight_layout()
+plt.savefig("particle_temperature.png", bbox_inches="tight", pad_inches=0.1, dpi=300)
 plt.show()
