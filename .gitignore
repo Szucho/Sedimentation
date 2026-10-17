@@ -1,0 +1,10 @@
+# build output
+build/
+.cache/
+__pycache__/
+*.pyc
+
+# test runs: only 100mikron is tracked
+supersonic/
+supersonic_nocond/
+conduction_test/

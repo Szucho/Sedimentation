@@ -1,72 +1,67 @@
-import numpy as np
 import os
+import sys
+import numpy as np
 import matplotlib.pyplot as plt
 
-def read_particle_bin(filepath):
-    # Define the structure to match your C++ writeParticleBin:
-    # i4 = 4-byte integer (n)
-    # f8 = 8-byte float/double (t, x, y, vx, vy)
-    dt_struct = np.dtype([
-        ('n', 'i4'),
-        ('t', 'f8'),
-        ('z', 'f8'),
-        ('r', 'f8'),
-        ('vz', 'f8'),
-        ('vr', 'f8'),
-        ('T', 'f8'),
-        ('active', 'i4')
-    ])
-    
-    # Read the data into a structured array
-    data = np.fromfile(filepath, dtype=dt_struct)
-    return data
+from hydro_reader import read_meta, read_particle, coord_origin
 
-# Load the meta data
-def read_meta(outdir):
-    meta = {}
-    with open(os.path.join(outdir, "meta.txt")) as f:
-        for line in f:
-            line = line.strip()
-            if not line: continue
-            
-            # Split the line into the key and the value
-            # e.g., "Nx 80" -> ["Nx", "80"]
-            parts = line.split()
-            
-            if len(parts) == 2:
-                key, val = parts
-                meta[key] = float(val)
-                
-    return meta
+"""
+Particle trajectory, velocity and temperature from particle.bin
+ usage: python particle.py [outdir]
+"""
 
 # Execution
-outdir = input("Output directory: ").strip()
+outdir = sys.argv[1] if len(sys.argv) > 1 else input("Output directory: ").strip()
 meta = read_meta(outdir)
-data = read_particle_bin(os.path.join(outdir, "particle.bin"))
+data = read_particle(outdir)
+if data is None or len(data) == 0:
+    raise RuntimeError(f"no particle data in {outdir}/particle.bin")
+
+# Scale height and sound speed of the gaussian_z profile
+# cs_iso in meta.txt is p0/rho0 = c_s^2 (name kept from the old writer)
+if 'cs_iso' in meta and 'H_iso' in meta:
+    cs = np.sqrt(meta['cs_iso'])
+    H = meta['H_iso']
+elif all(k in meta for k in ('gas_p0', 'gas_rho0', 'Omega')):
+    cs = np.sqrt(meta['gas_p0']/meta['gas_rho0'])
+    H = np.sqrt(2.0)*cs/meta['Omega']
+else:
+    # meta.txt written before the gas parameters were added to it -> plot in physical units
+    print("meta.txt has no gas parameters (run made with an older build): plotting z in cm and v in cm/s.\n"
+          "Rerun the simulation to get z/H and v/c_s.")
+    cs = H = None
+scaled = H is not None
+
+# legend label with the particle size (if the run wrote it)
+s0 = f"{meta['particle_radius']:g}" if 'particle_radius' in meta else "0.01"
 
 # Conversions
 # Simulated time in years
 print(data.shape)
 t_yr = data['t'] / (60 * 60 * 24 * 365)
-z = data["z"]/meta["H_iso"]
-vz = data['vz']/np.sqrt(meta["cs_iso"])
+z_org, _ = coord_origin(meta)
+z_abs = data["z"] + (meta['zmin'] - z_org)  # absolute z (local runs store z - zmin)
+z = z_abs/H if scaled else z_abs
+vz = data['vz']/cs if scaled else data['vz']
 T = data["T"]
 
 # Plotting
-print(f"Latest simulation time: {t_yr[-1]:.2f} years")
+print(f"Latest simulation time: {t_yr[-1]:.3e} years")
+if not data['active'][-1]:
+    print("particle left the domain (inactive)")
 
 fig, ax1 = plt.subplots(figsize=(10, 7))
 
 # Axis 1: Position (Left)
-ax1.plot(t_yr, z, 'k-', label=r'$z: s_0 = 1e-2$cm')
+ax1.plot(t_yr, z, 'k-', label=rf'$z: s_0 = {s0}$cm')
 ax1.set_xlabel('t [yr]', fontsize=12)
-ax1.set_ylabel(r'$z/H_1$', fontsize=12)
+ax1.set_ylabel(r'$z/H_1$' if scaled else r'$z$ [cm]', fontsize=12)
 ax1.set_xscale('log')
 
 # Axis 2: Velocity (Right)
 ax2 = ax1.twinx()
-ax2.plot(t_yr, vz, 'k--', label=r'$v: s_0 = 1e-2$cm')
-ax2.set_ylabel(r'$v/c_s$', fontsize=12)
+ax2.plot(t_yr, vz, 'k--', label=rf'$v: s_0 = {s0}$cm')
+ax2.set_ylabel(r'$v/c_s$' if scaled else r'$v$ [cm/s]', fontsize=12)
 
 # Grid and Legend
 ax1.grid(True, which="both", ls=":", alpha=0.5)
@@ -77,8 +72,9 @@ lines2, labels2 = ax2.get_legend_handles_labels()
 ax2.legend(lines + lines2, labels + labels2, loc='center right', frameon=False)
 
 # Info text in bottom left
-info_str = f"$H_1$={meta['H_iso']:.3e} cm\n$c_s$={np.sqrt(meta['cs_iso']):.3e} cm/s"
-ax1.text(0.05, 0.05, info_str, transform=ax1.transAxes, verticalalignment='bottom')
+if scaled:
+    info_str = f"$H_1$={H:.3e} cm\n$c_s$={cs:.3e} cm/s"
+    ax1.text(0.05, 0.05, info_str, transform=ax1.transAxes, verticalalignment='bottom')
 
 plt.tight_layout()
 plt.savefig("particle.png", bbox_inches="tight", pad_inches=0.1, dpi=300)
@@ -86,10 +82,10 @@ plt.show()
 
 
 fig, ax1 = plt.subplots(figsize=(5,5))
-ax1.plot(t_yr, T/T[0], "k-", label=r"$T: s_0 = 1e-2$cm")
+ax1.plot(t_yr, T/T[0], "k-", label=rf"$T: s_0 = {s0}$cm")
 ax1.set_xlabel(r"t [yr]")
-ax1.set_ylabel(r"T/T_0")
-ax1.set_yscale("log")
+ax1.set_ylabel(r"T/T$_0$")
+# ax1.set_yscale("log")
 ax1.set_xscale("log")
 ax1.grid(ls=":", alpha=0.5)
 ax1.legend()

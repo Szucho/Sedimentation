@@ -1,206 +1,133 @@
-import numpy as np
-import pandas as pd
 import os
+import sys
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.patches as patches
 
-k_B = 1.380649e-16
-m_p = 1.672622e-24
-mu  = 2.4
+from hydro_reader import read_meta, read_grid, read_particle, canvas_shape, stitch, primitives, get_mu, coord_origin
 
+"""
+Animation of the AMR gas output (grid.bin) with the mesh blocks and the particle
 
-def read_meta(outdir):
-    meta = {}
-    with open(os.path.join(outdir, "meta.txt")) as f:
-        for line in f:
-            line = line.strip()
-            if not line: continue
-            parts = line.split()
-            if len(parts) == 2:
-                key, val = parts
-                meta[key] = float(val)
-    return meta
+ panels: log(rho/rho_0), z-velocity u, T, p on a uniform canvas at the finest level of the run
+ axes:   r horizontal, z vertical, measured from rmin / zmin (the absolute values ~1e12-1e13 cm
+         can't be resolved on a few-cm wide axis)
+ usage:  python animate.py [outdir]
+"""
 
+SHOW_BLOCKS = True  # mesh block outlines on the density panel
+FPS = 20
 
-def read_grid(path):
-    frames = []
-    with open(path, 'rb') as f:
-        nx = np.frombuffer(f.read(8), dtype=np.uint64)[0]
-        ny = np.frombuffer(f.read(8), dtype=np.uint64)[0]
-        while True:
-            tbuf = f.read(8)
-            if not tbuf: break
-            t   = np.frombuffer(tbuf, dtype=np.float64)[0]
-            raw = f.read(int(nx * ny * 4 * 8))
-            if len(raw) != nx * ny * 4 * 8: break
-            data = np.frombuffer(raw, dtype=np.float64).reshape(nx, ny, 4)
-            frames.append((t, data))
-    return frames
-
-
-def read_particle_bin(filepath):
-    # Struktúra másolása a jól működő particle.py-ból
-    dt_struct = np.dtype([
-        ('n', 'i4'),
-        ('t', 'f8'),
-        ('z', 'f8'),
-        ('r', 'f8'),
-        ('vz', 'f8'),
-        ('vr', 'f8'),
-        ('T', 'f8'),
-        ('active', 'i4')
-    ])
-    if os.path.exists(filepath):
-        return np.fromfile(filepath, dtype=dt_struct)
-    return None
-
-#primitive values from state vector
-def compute_primitives(data, gamma=1.4):
-    rho = data[:,:,0]
-    u   = data[:,:,1] / rho
-    v   = data[:,:,2] / rho
-    E   = data[:,:,3]
-    p   = (gamma - 1.0) * (E - 0.5 * rho * (u**2 + v**2))
-    T   = p * m_p * mu / (rho * k_B)
-    return rho, u, v, p, T
-
-#color lims
-def lims(arr_list):
-    return min(a.min() for a in arr_list), max(a.max() for a in arr_list)
-
-#load frames
-outdir = input("Output directory: ").strip()
+outdir = sys.argv[1] if len(sys.argv) > 1 else input("Output directory: ").strip()
 
 meta = read_meta(outdir)
-print(meta)
 zmin, zmax = meta['zmin'], meta['zmax']
 rmin, rmax = meta['rmin'], meta['rmax']
-nz, nr     = int(meta['Nz']), int(meta['Nr'])
-gamma      = meta['gamma']
-
+gamma = meta['gamma']
+mu = get_mu(meta)
+z_org, r_org = coord_origin(meta)  # subtract from file coordinates to get z - zmin, r - rmin
 
 print("Loading grid.bin...")
 frames = read_grid(os.path.join(outdir, "grid.bin"))
 if not frames:
     raise RuntimeError("grid.bin is empty or could not be read")
-print(f"Loaded {len(frames)} frames")
+nz_c, nr_c, max_level = canvas_shape(frames, meta)
+print(f"Loaded {len(frames)} frames, finest level {max_level}, canvas {nz_c} x {nr_c}")
+
+times = [t for t, _ in frames]
 
 
-times = [f[0] for f in frames]
-prims = [compute_primitives(f[1], gamma) for f in frames]
+#fields of one frame on the canvas (stitched on demand: all frames at once would not fit in memory at high levels)
+def fields(n):
+    rho, u, v, p, T = primitives(stitch(frames[n][1], (nz_c, nr_c), max_level), gamma, mu)
+    return [np.log10(rho/rho_base), u, T, p]
 
 
-particle_bin_path = os.path.join(outdir, "particle.bin")
-part_data = read_particle_bin(particle_bin_path)
-has_particle = part_data is not None
+rho_base = primitives(stitch(frames[0][1], (nz_c, nr_c), max_level), gamma, mu)[0]
 
+#colour limits over all frames
+print("Computing colour limits...")
+lims = None
+for n in range(len(frames)):
+    f = fields(n)
+    cur = [(np.nanmin(a), np.nanmax(a)) for a in f]
+    lims = cur if lims is None else [(min(a[0], b[0]), max(a[1], b[1])) for a, b in zip(lims, cur)]
+#a constant field (e.g. log(rho/rho_0) = 0 at t=0) needs a non-empty colour range
+lims = [(lo, hi) if hi > lo else (lo - 1e-12 - 1e-6*abs(lo), hi + 1e-12 + 1e-6*abs(hi)) for lo, hi in lims]
+
+part = read_particle(outdir)
+has_particle = part is not None and len(part) > 0
 if has_particle:
-    print(f"Loaded particle data with {len(part_data)} rows")
-    # Indexelés az 'n' (időlépés index) szerint a gyors kereséshez az update-ben
-    part_df = pd.DataFrame(part_data)
-    part_by_n = part_df.set_index('n')
+    print(f"Loaded particle data with {len(part)} rows")
 else:
     print("No particle.bin found, skipping particle overlay")
 
+#cell edges relative to the domain corner
+z_edges = np.linspace(0.0, zmax - zmin, nz_c + 1)
+r_edges = np.linspace(0.0, rmax - rmin, nr_c + 1)
 
-rho_base = prims[0][0]
-#color lim of primitive vals
-log_rho_ratios = [np.log10(p[0]/rho_base) for p in prims]
-rho_lim = lims(log_rho_ratios)
-# rho_lim = lims([p[0] for p in prims])
-u_lim   = lims([p[1] for p in prims])
-T_lim   = lims([p[4] for p in prims])
-p_lim   = lims([p[3] for p in prims])
+fig, axes = plt.subplots(2, 2, figsize=(9, 9))
+fig.subplots_adjust(hspace=0.4, wspace=0.45)
 
-#figure
-fig, axes = plt.subplots(2, 2, figsize=(8, 8))
-fig.subplots_adjust(hspace=0.4, wspace=0.35)
+titles = [r"Relative density  $\log(\rho/\rho_0)$", r"$z$-velocity  $u$ [cm/s]", r"$T$ [K]", r"Pressure  $p$"]
+cmaps = ["inferno", "RdBu_r", "RdBu_r", "viridis"]
 
-titles = [r"Relative density  $\log(\rho/\rho_0)$", r"$x$-velocity  $u$", r"$T$", r"Pressure  $p$"]
-clims  = [rho_lim, u_lim, T_lim, p_lim]
-cmaps  = ["inferno", "RdBu_r", "RdBu_r", "viridis"]
-
-y_ticks = np.linspace(0, nz, 5)
-y_labels = [f"{zmin + v*(zmax-zmin)/nz:.2g}" for v in y_ticks]
-x_ticks  = np.linspace(0, nr, 3)
-x_labels = [f"{rmin + v*(rmax-rmin)/nr:.2g}" for v in x_ticks]
-
-rho0, u0, v0, p0, T0 = prims[0]
-rho0_log = np.log10(rho0 / rho_base)
-meshes = []
-p_dots = []
-
-for ax, field, title, clim, cmap in zip(axes.flat, [rho0_log,u0,T0,p0], titles, clims, cmaps):
-    mesh = ax.pcolormesh(field, cmap=cmap, vmin=clim[0], vmax=clim[1], shading='auto')
+meshes, p_dots = [], []
+for ax, field, title, lim, cmap in zip(axes.flat, fields(0), titles, lims, cmaps):
+    mesh = ax.pcolormesh(r_edges, z_edges, field, cmap=cmap, vmin=lim[0], vmax=lim[1], shading='flat')
     fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title(title, fontsize=11)
-    ax.set_xticks(x_ticks); ax.set_xticklabels(x_labels, fontsize=7)
-    ax.set_yticks(y_ticks); ax.set_yticklabels(y_labels, fontsize=7)
-    ax.set_xlabel("r"); ax.set_ylabel("z")
+    ax.set_xlabel(r"$r - r_{min}$ [cm]")
+    ax.set_ylabel(r"$z - z_{min}$ [cm]")
+    ax.tick_params(labelsize=7)
     meshes.append(mesh)
     if has_particle:
         dot, = ax.plot([], [], 'w+', ms=8, mew=1.5)
         p_dots.append(dot)
 
+suptitle = fig.suptitle("", fontsize=12, fontweight='bold')
+fig.text(0.5, 0.01, f"$z_{{min}}$ = {zmin:.6e} cm,   $r_{{min}}$ = {rmin:.10e} cm", ha='center', fontsize=8)
 
-suptitle = fig.suptitle(f"t = {times[0]:.4f}", fontsize=13, fontweight='bold')
 
-part_df = pd.DataFrame(part_data)
-part_times = part_df['t'].values
-#update
+def draw_blocks(n):
+    ax = axes.flat[0]
+    for p in list(ax.patches):
+        p.remove()
+    for b in frames[n][1]:
+        ax.add_patch(patches.Rectangle((b['x2min'] - r_org, b['x1min'] - z_org),
+                                       b['x2max'] - b['x2min'], b['x1max'] - b['x1min'],
+                                       linewidth=0.4 + 0.2*b['level'], edgecolor='white',
+                                       facecolor='none', alpha=0.6))
+
+
 def update(n):
-    rho, u, _, p, T = prims[n]
-    rho_log = np.log10(rho/rho_base)
-    for mesh, field in zip(meshes, [rho_log, u, T, p]):
+    for mesh, field in zip(meshes, fields(n)):
         mesh.set_array(field.ravel())
-    suptitle.set_text(f"t = {times[n]:.4f}")
+    if SHOW_BLOCKS:
+        draw_blocks(n)
+    suptitle.set_text(f"t = {times[n]:.4g} s   ({len(frames[n][1])} blocks)")
     if has_particle:
-        current_t = times[n]
-        idx = np.argmin(np.abs(part_times - current_t))
-        row = part_df.iloc[idx]
-        if row['active']:
-            py = (row['z'] - zmin) / (zmax - zmin) * nz
-            px = (row['r'] - rmin) / (rmax - rmin) * nr
-            for dot in p_dots:
-                dot.set_data([px], [py])
-        else:
-            for dot in p_dots:
-                dot.set_data([], [])
-    else:
-        if has_particle:
-            for dot in p_dots:
+        row = part[np.argmin(np.abs(part['t'] - times[n]))]
+        for dot in p_dots:
+            if row['active']:
+                dot.set_data([row['r'] - r_org], [row['z'] - z_org])
+            else:
                 dot.set_data([], [])
     return meshes + p_dots + [suptitle]
 
 
-ani = animation.FuncAnimation(fig, update, frames=len(prims), interval=50, blit=False)
+update(0)
+ani = animation.FuncAnimation(fig, update, frames=len(frames), interval=50, blit=False)
 plt.show()
 
 #save
 if input("Save as mp4? (y/n): ").strip().lower() == 'y':
     out = os.path.join(outdir, "animation.mp4")
-    ani.save(out, writer='ffmpeg', fps=200, dpi=150)
+    try:
+        ani.save(out, writer='ffmpeg', fps=FPS, dpi=150)
+    except Exception as e:  #no ffmpeg -> gif
+        print(f"ffmpeg failed ({e}), saving a gif instead")
+        out = os.path.join(outdir, "animation.gif")
+        ani.save(out, writer='pillow', fps=FPS)
     print(f"Saved to {out}")
-
-# #check at t=0.2
-# rho_final = prims[-1][0]  #shape: (nx, ny)
-# u_final = prims[-1][1]
-# p_final = prims[-1][3]
-# j_mid = rho_final.shape[1] // 2
-# rho_slice = rho_final[:, j_mid]
-# u_slice = u_final[:, j_mid]
-# p_slice = p_final[:, j_mid]
-# x = np.linspace(0, 1, len(rho_slice))
-#
-# plt.figure(figsize=(8, 4))
-# plt.plot(x, rho_slice, 'b-', lw=1.5, label=r'$\rho(x,y=0.5)$')
-# plt.plot(x, u_slice, 'r--', lw=1.5, label=r'$u(x,y=0.5)$')
-# plt.plot(x, p_slice, 'g-.', lw=1.5, label=r'$p(x,y=0.5)$')
-# plt.xlabel("x")
-# plt.ylabel(f"Primitive vals HLLC t={times[-1]:.4f}")
-# plt.title("shock tube snippet primitive vals at t~0.2")
-# plt.legend()
-# plt.grid(ls=":",alpha=0.5)
-# plt.tight_layout()
-# plt.savefig("./Sod_shock_tube/sod_shock_tube_1d.png", bbox_inches="tight", dpi=300)
-# plt.show()
