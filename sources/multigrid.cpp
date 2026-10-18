@@ -274,12 +274,80 @@ void MGConduction::setup(Mesh& mesh){
     }
 
     L.C = View1D("mg_C", L.n);  L.kap = View1D("mg_kap", L.n);  L.D = View1D("mg_D", L.n);
-    L.x = View1D("mg_x", L.n);  L.b = View1D("mg_b", L.n);  L.r = View1D("mg_r", L.n);
+    L.x = View1D("mg_x", L.n);  L.b = View1D("mg_b", L.n);
     L.work = View1D("mg_work", L.n);
   }
   int n0 = lv_[0].n;
-  cg_r_ = View1D("cg_r", n0);  cg_z_ = View1D("cg_z", n0);
   cg_p_ = View1D("cg_p", n0);  cg_Ap_ = View1D("cg_Ap", n0);
+  build_small_levels();
+}
+
+
+//flat storage of the small levels (see multigrid.hpp). Small levels: from the first level after the leaf level with
+//at most small_level_cells cells down to the coarsest (always at least the coarsest level).
+void MGConduction::build_small_levels(){
+  int L = (int)lv_.size();
+  ls_ = L - 1;
+  for(int l = std::min(1, L - 1); l < L; ++l) if(lv_[l].n <= small_level_cells){ ls_ = l; break; }
+  nsmall_ = L - ls_;
+  if(nsmall_ > kMaxSmall) throw std::runtime_error("MGConduction: too many small levels");
+
+  //host copies of the per-level index arrays
+  std::vector<int> cell_off(nsmall_ + 1, 0), edge_off(nsmall_ + 1, 0);
+  for(int k = 0; k < nsmall_; ++k){
+    cell_off[k + 1] = cell_off[k] + lv_[ls_ + k].n;
+    edge_off[k + 1] = edge_off[k] + (int)lv_[ls_ + k].col.extent(0);
+  }
+  int Nc = cell_off[nsmall_], Ne = edge_off[nsmall_];
+  std::vector<int> rb(Nc), re(Nc), colv(Ne), par(Nc, -1), cb(Nc, 0), ce(Nc, 0), chv, colcells;
+  std::vector<int> color_off(2*nsmall_ + 1, 0);
+  for(int k = 0; k < nsmall_; ++k){
+    const MGLevel& Lv = lv_[ls_ + k];
+    auto rp = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), Lv.row_ptr);
+    auto cl = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), Lv.col);
+    auto pa = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), Lv.parent);
+    for(int c = 0; c < Lv.n; ++c){
+      rb[cell_off[k] + c] = edge_off[k] + rp(c);
+      re[cell_off[k] + c] = edge_off[k] + rp(c + 1);
+      if(k + 1 < nsmall_) par[cell_off[k] + c] = cell_off[k + 1] + pa(c);
+    }
+    for(int e = 0; e < (int)cl.extent(0); ++e) colv[edge_off[k] + e] = cell_off[k] + cl(e);
+    if(k > 0){ //children of level k live on level k-1 (also small)
+      auto cp = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), Lv.child_ptr);
+      auto ch = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), Lv.child);
+      for(int c = 0; c < Lv.n; ++c){
+        cb[cell_off[k] + c] = (int)chv.size() + cp(c);
+        ce[cell_off[k] + c] = (int)chv.size() + cp(c + 1);
+      }
+      int base = (int)chv.size();
+      chv.resize(base + ch.extent(0));
+      for(int i = 0; i < (int)ch.extent(0); ++i) chv[base + i] = cell_off[k - 1] + ch(i);
+    }
+    for(int color = 0; color < 2; ++color){
+      auto cc = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), Lv.color_cells[color]);
+      for(int i = 0; i < (int)cc.extent(0); ++i) colcells.push_back(cell_off[k] + cc(i));
+      color_off[2*k + color + 1] = (int)colcells.size();
+    }
+  }
+  for(int k = 0; k <= nsmall_; ++k) s_cell_off_[k] = cell_off[k];
+  for(int k = 0; k <= 2*nsmall_; ++k) s_color_off_[k] = color_off[k];
+  s_rb_ = to_device(rb, "mg_s_rb");  s_re_ = to_device(re, "mg_s_re");  s_col_ = to_device(colv, "mg_s_col");
+  s_parent_ = to_device(par, "mg_s_parent");  s_cb_ = to_device(cb, "mg_s_cb");  s_ce_ = to_device(ce, "mg_s_ce");
+  s_child_ = to_device(chv.empty() ? std::vector<int>{0} : chv, "mg_s_child");
+  s_colcells_ = to_device(colcells, "mg_s_colcells");
+  s_W_ = View1D("mg_s_W", std::max(Ne, 1));  s_D_ = View1D("mg_s_D", Nc);
+  s_x_ = View1D("mg_s_x", Nc);  s_b_ = View1D("mg_s_b", Nc);  s_work_ = View1D("mg_s_work", Nc);
+
+  //the small levels' W, D, x, b, work become (unmanaged) views into the flat arrays, so set_coefficients and the
+  //restriction from the last large level write directly into the flat storage
+  for(int k = 0; k < nsmall_; ++k){
+    MGLevel& Lv = lv_[ls_ + k];
+    Lv.W    = View1D(s_W_.data() + edge_off[k], edge_off[k + 1] - edge_off[k]);
+    Lv.D    = View1D(s_D_.data() + cell_off[k], Lv.n);
+    Lv.x    = View1D(s_x_.data() + cell_off[k], Lv.n);
+    Lv.b    = View1D(s_b_.data() + cell_off[k], Lv.n);
+    Lv.work = View1D(s_work_.data() + cell_off[k], Lv.n);
+  }
 }
 
 
@@ -361,71 +429,97 @@ void MGConduction::smooth(int l, int color){
 }
 
 
-//Athena++ CalculateDefectBlock: r = b - A x
-void MGConduction::defect(int l){
+//Athena++ CalculateDefectBlock + RestrictBlock fused: the coarse source is the sum of the children's defects
+//r = b - A x (integrated form of the volume average), computed on the fly. Also zeroes the coarse solution (the coarse
+//V-cycle starts from zero), so no separate fill kernel is needed.
+void MGConduction::defect_restrict(int l){
   MGLevel& L = lv_[l];
-  View1D x = L.x, b = L.b, r = L.r, D = L.D, W = L.W;
-  IdxView row_ptr = L.row_ptr, col = L.col;
-  Kokkos::parallel_for("MGDefect", Kokkos::RangePolicy<ExecutionSpace>(0, L.n), KOKKOS_LAMBDA(int c){
-    Real s = b(c) - D(c)*x(c);
-    for(int e = row_ptr(c); e < row_ptr(c + 1); ++e) s += W(e)*x(col(e));
-    r(c) = s;
+  MGLevel& Cl = lv_[l + 1];
+  View1D x = L.x, b = L.b, D = L.D, W = L.W, bc = Cl.b, xc = Cl.x;
+  IdxView row_ptr = L.row_ptr, col = L.col, cp = Cl.child_ptr, ch = Cl.child;
+  Kokkos::parallel_for("MGDefectRestrict", Kokkos::RangePolicy<ExecutionSpace>(0, Cl.n), KOKKOS_LAMBDA(int c){
+    Real sum = 0.0;
+    for(int k = cp(c); k < cp(c + 1); ++k){
+      int f = ch(k);
+      Real r = b(f) - D(f)*x(f);
+      for(int e = row_ptr(f); e < row_ptr(f + 1); ++e) r += W(e)*x(col(e));
+      sum += r;
+    }
+    bc(c) = sum;
+    xc(c) = 0.0;
   });
 }
 
 
-//coarsest level (Athena++ SolveCoarsestGrid: smoothed a fixed number of times instead of an exact solve).
-//ncoarsest colour pairs forward and then the same in reverse order -> symmetric; one serial kernel, it is tiny.
-void MGConduction::solve_coarsest(){
-  MGLevel& L = lv_.back();
-  View1D x = L.x, b = L.b, D = L.D, W = L.W, work = L.work;
-  IdxView row_ptr = L.row_ptr, col = L.col, c0 = L.color_cells[0], c1 = L.color_cells[1];
+//the V-cycle of the small levels ls_ .. L-1 in ONE team kernel (team barriers between the steps), same operations
+//in the same order as vcycle(): pre-smoothing colours 0,1 -> defect + restriction -> ... -> coarsest level smoothed
+//ncoarsest colour pairs forward and in reverse (Athena++ SolveCoarsestGrid) -> prolongation + post-smoothing 1,0.
+//Expects b and x = 0 of level ls_ to be set (by defect_restrict of the level above, or by the caller).
+void MGConduction::small_vcycle(){
+  IdxView rb = s_rb_, re = s_re_, col = s_col_, par = s_parent_, cb = s_cb_, ce = s_ce_, child = s_child_,
+          colcells = s_colcells_;
+  View1D W = s_W_, D = s_D_, x = s_x_, b = s_b_, work = s_work_;
+  auto coff = s_cell_off_;
+  auto kof = s_color_off_;
+  int K = nsmall_, npre_ = npre, npost_ = npost, nsweep = ncoarsest;
   Real om = omega;
-  int n = L.n, nsweep = ncoarsest;
   using member_t = Kokkos::TeamPolicy<ExecutionSpace>::member_type;
-  Kokkos::parallel_for("MGCoarsest", Kokkos::TeamPolicy<ExecutionSpace>(1, Kokkos::AUTO), KOKKOS_LAMBDA(const member_t& t){
-    Kokkos::parallel_for(Kokkos::TeamThreadRange(t, n), [&](int c){ x(c) = 0.0; });
-    t.team_barrier();
-    auto sweep = [&](const IdxView& cells){
-      int nc = (int)cells.extent(0);
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(t, nc), [&](int k){
-        int c = cells(k);
-        Real s = b(c);
-        for(int e = row_ptr(c); e < row_ptr(c + 1); ++e) s += W(e)*x(col(e));
-        work(c) = s/D(c);
-      });
-      t.team_barrier();
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(t, nc), [&](int k){
-        int c = cells(k);
-        x(c) += om*(work(c) - x(c));
-      });
-      t.team_barrier();
-    };
-    for(int s = 0; s < nsweep; ++s){ sweep(c0); sweep(c1); }
-    for(int s = 0; s < nsweep; ++s){ sweep(c1); sweep(c0); }
-  });
+  Kokkos::parallel_for("MGSmallVcycle", Kokkos::TeamPolicy<ExecutionSpace>(1, Kokkos::AUTO),
+    KOKKOS_LAMBDA(const member_t& t){
+      //jacobi-rb sweep of one colour of level k (two passes, see smooth())
+      auto sweep = [&](int k, int color){
+        int c0 = kof[2*k + color], c1 = kof[2*k + color + 1];
+        Kokkos::parallel_for(Kokkos::TeamThreadRange(t, c0, c1), [&](int i){
+          int c = colcells(i);
+          Real s = b(c);
+          for(int e = rb(c); e < re(c); ++e) s += W(e)*x(col(e));
+          work(c) = s/D(c);
+        });
+        t.team_barrier();
+        Kokkos::parallel_for(Kokkos::TeamThreadRange(t, c0, c1), [&](int i){
+          int c = colcells(i);
+          x(c) += om*(work(c) - x(c));
+        });
+        t.team_barrier();
+      };
+      //down
+      for(int k = 0; k < K - 1; ++k){
+        for(int s = 0; s < npre_; ++s){ sweep(k, 0); sweep(k, 1); }
+        Kokkos::parallel_for(Kokkos::TeamThreadRange(t, coff[k + 1], coff[k + 2]), [&](int c){
+          Real sum = 0.0;
+          for(int i = cb(c); i < ce(c); ++i){
+            int f = child(i);
+            Real r = b(f) - D(f)*x(f);
+            for(int e = rb(f); e < re(f); ++e) r += W(e)*x(col(e));
+            sum += r;
+          }
+          b(c) = sum;
+          x(c) = 0.0;
+        });
+        t.team_barrier();
+      }
+      //coarsest
+      for(int s = 0; s < nsweep; ++s){ sweep(K - 1, 0); sweep(K - 1, 1); }
+      for(int s = 0; s < nsweep; ++s){ sweep(K - 1, 1); sweep(K - 1, 0); }
+      //up
+      for(int k = K - 2; k >= 0; --k){
+        Kokkos::parallel_for(Kokkos::TeamThreadRange(t, coff[k], coff[k + 1]), [&](int c){ x(c) += x(par(c)); });
+        t.team_barrier();
+        for(int s = 0; s < npost_; ++s){ sweep(k, 1); sweep(k, 0); }
+      }
+    });
 }
 
 
 //V-cycle from zero initial guess on level l (Athena++ OneStepToCoarser / SolveCoarsestGrid / OneStepToFiner).
 //Pre-smoothing colours 0,1, post-smoothing 1,0 (reverse) -> symmetric preconditioner.
+//Expects b and x = 0 of level l to be set.
 void MGConduction::vcycle(int l){
-  if(l == (int)lv_.size() - 1){ solve_coarsest(); return; }
+  if(l == ls_){ small_vcycle(); return; }
   MGLevel& L = lv_[l];
   MGLevel& Cl = lv_[l + 1];
-  Kokkos::deep_copy(L.x, 0.0);
   for(int s = 0; s < npre; ++s){ smooth(l, 0); smooth(l, 1); }
-  defect(l);
-  //restriction: coarse source = sum of the children's defects (integrated form of the volume average)
-  {
-    View1D r = L.r, bc = Cl.b;
-    IdxView cp = Cl.child_ptr, ch = Cl.child;
-    Kokkos::parallel_for("MGRestrict", Kokkos::RangePolicy<ExecutionSpace>(0, Cl.n), KOKKOS_LAMBDA(int c){
-      Real s = 0.0;
-      for(int k = cp(c); k < cp(c + 1); ++k) s += r(ch(k));
-      bc(c) = s;
-    });
-  }
+  defect_restrict(l);
   vcycle(l + 1);
   //prolongation (piecewise constant) and correction
   {
@@ -441,27 +535,47 @@ void MGConduction::vcycle(int l){
 
 void MGConduction::precondition(const View1D& r, const View1D& z){
   Kokkos::deep_copy(lv_[0].b, r);
+  Kokkos::deep_copy(lv_[0].x, 0.0);
   vcycle(0);
   Kokkos::deep_copy(z, lv_[0].x);
 }
 
 
+//y = A x on the leaf level and returns x.y (fused: one kernel, one host sync)
+Real MGConduction::apply_dot(const View1D& x, const View1D& y){
+  const MGLevel& L = lv_[0];
+  View1D D = L.D, W = L.W;
+  IdxView row_ptr = L.row_ptr, col = L.col;
+  Real xy = 0.0;
+  Kokkos::parallel_reduce("MGApplyDot", Kokkos::RangePolicy<ExecutionSpace>(0, L.n), KOKKOS_LAMBDA(int c, Real& acc){
+    Real s = D(c)*x(c);
+    for(int k = row_ptr(c); k < row_ptr(c + 1); ++k) s -= W(k)*x(col(k));
+    y(c) = s;
+    acc += x(c)*s;
+  }, xy);
+  return xy;
+}
+
+
+//CG works in place on the leaf level of the multigrid: the residual r IS the V-cycle's source lv_[0].b and the
+//preconditioned residual z IS its solution lv_[0].x, so the preconditioner needs no copies. z is zeroed in the
+//update kernel (the next V-cycle starts from zero) once p has been built from it.
 int MGConduction::solve(const View1D& b, const View1D& x, Real tol, int max_iter, bool& converged, Real x_tol){
   int n = lv_[0].n;
-  View1D r = cg_r_, z = cg_z_, p = cg_p_, Ap = cg_Ap_;
+  View1D r = lv_[0].b, z = lv_[0].x, p = cg_p_, Ap = cg_Ap_;
   Kokkos::deep_copy(x, 0.0);
   Kokkos::deep_copy(r, b);
   Real bb = dot(b, b, n);
   converged = (bb == 0.0);
   if(converged) return 0;
 
-  precondition(r, z);
+  Kokkos::deep_copy(z, 0.0);
+  vcycle(0);
   Kokkos::deep_copy(p, z);
   Real rz = dot(r, z, n);
   int it = 0;
   while(it < max_iter){
-    apply(p, Ap, true);
-    Real alpha = rz/dot(p, Ap, n);
+    Real alpha = rz/apply_dot(p, Ap);
     Real rr = 0.0, dx_max = 0.0;
     Kokkos::parallel_reduce("CGUpdate", Kokkos::RangePolicy<ExecutionSpace>(0, n),
       KOKKOS_LAMBDA(int i, Real& acc, Real& dmax){
@@ -469,12 +583,13 @@ int MGConduction::solve(const View1D& b, const View1D& x, Real tol, int max_iter
         x(i) += dx;
         Real ri = r(i) - alpha*Ap(i);
         r(i) = ri;
+        z(i) = 0.0;
         acc += ri*ri;
         dmax = Kokkos::fmax(dmax, Kokkos::fabs(dx));
       }, rr, Kokkos::Max<Real>(dx_max));
     ++it;
     if(rr <= tol*tol*bb || dx_max <= x_tol){ converged = true; break; }
-    precondition(r, z);
+    vcycle(0);
     Real rz_new = dot(r, z, n);
     Real beta = rz_new/rz;
     rz = rz_new;

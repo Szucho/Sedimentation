@@ -196,6 +196,8 @@ struct ImplicitWork {
   View4D flux1;      //block-face fluxes of the first B1 solve (for the reflux)
   View5D Cp;         //block-Thomas D'^{-1} C blocks, one per line cell
   View1D x1min;      //lower z edge of every block
+  View1D::host_mirror_type h_x1min; //its host copy (persistent)
+  bool x1min_valid = false;
   int capacity = 0;
 
   void ensure(Mesh& mesh){
@@ -212,14 +214,23 @@ struct ImplicitWork {
       dU    = View4D("implicit_dU", capacity, ni, nj, NVAR);
       Cp    = View5D("implicit_Cp", capacity, lmax, lmax, NVAR, NVAR);
       x1min = View1D("block_x1min", capacity);
+      h_x1min = Kokkos::create_mirror_view(x1min);
+      x1min_valid = false;
       View4D f = mesh.get_flux_view();
       flux1 = View4D("implicit_flux1", f.extent(0), f.extent(1), f.extent(2), f.extent(3));
     }
 
-    //block geometry changes with every AMR update, so refresh it every call
-    auto h_x1min = Kokkos::create_mirror_view(x1min);
-    for(const auto& bptr : mesh.blocks()) h_x1min(bptr->slot_id) = bptr->block_size.x1min;
-    Kokkos::deep_copy(x1min, h_x1min);
+    //block geometry changes with AMR updates: compare on the host, upload only if something changed
+    //(a host->device copy every step is a synchronisation on a GPU)
+    bool changed = !x1min_valid;
+    for(const auto& bptr : mesh.blocks()){
+      if(h_x1min(bptr->slot_id) != bptr->block_size.x1min){
+        h_x1min(bptr->slot_id) = bptr->block_size.x1min;
+        changed = true;
+      }
+    }
+    if(changed) Kokkos::deep_copy(x1min, h_x1min);
+    x1min_valid = true;
   }
 };
 
@@ -688,24 +699,36 @@ Real particle_cell_volume(const MeshBlock& blk, const Particle& p, Real r0, cons
   return blk.dx1()*blk.dx2()*depth;
 }
 
+//device result of the gas interpolation + its host copy, allocated once (allocating and freeing Views every call
+//means cudaMalloc/cudaFree twice per step on a GPU, and cudaFree synchronises the device)
+struct GasAtParticleResult {
+  GasAtParticle gas;
+  Real inv_gas_mass;
+};
+struct ParticleScratch {
+  Kokkos::View<GasAtParticleResult, MemorySpace> d{"gas_at_particle"};
+  typename Kokkos::View<GasAtParticleResult, MemorySpace>::host_mirror_type h = Kokkos::create_mirror_view(d);
+};
+
 //false if no block contains the particle
-bool gas_at_particle(Mesh& mesh, const Particle& p, Real gamma, const std::string& depth_mode, ParticleCoupling& out){
+bool gas_at_particle(Mesh& mesh, const Particle& p, Real gamma, const std::string& depth_mode, ParticleCoupling& out,
+                     ParticleScratch& scratch){
   CICStencil S;
   if(!build_cic_stencil(mesh, p.z, p.r, S)) return false;
   //each stencil cell deposits into its own block's cell volume (blocks are stored at index slot_id)
   for(int k = 0; k < S.n; ++k) S.vol[k] = particle_cell_volume(*mesh.blocks()[S.b[k]], p, mesh.inputs().x2_origin, depth_mode);
 
   View4D data = mesh.get_data_view();
-  Kokkos::View<GasAtParticle, MemorySpace> d_gas("gas_at_particle");
-  Kokkos::View<Real, MemorySpace> d_inv_mass("inv_gas_mass");
+  auto d = scratch.d;
   Kokkos::parallel_for("InterpolateGas", Kokkos::RangePolicy<ExecutionSpace>(0, 1), KOKKOS_LAMBDA(int){
-    d_gas()      = interpolate_gas(data, S, gamma);
-    d_inv_mass() = cic_inv_gas_mass(data, S);
+    d().gas          = interpolate_gas(data, S, gamma);
+    d().inv_gas_mass = cic_inv_gas_mass(data, S);
   });
+  Kokkos::deep_copy(scratch.h, d); //one copy back for both results
 
   out.S = S;
-  out.gas = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), d_gas)();
-  out.inv_gas_mass = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), d_inv_mass)();
+  out.gas = scratch.h().gas;
+  out.inv_gas_mass = scratch.h().inv_gas_mass;
   return true;
 }
 
@@ -785,6 +808,7 @@ int main(int argc, char* argv[]){
     ApplyPhysicalBoundaryConditions(mesh, bc, ph.Omega, ph.cs2, ph.gamma);
 
     Particle p = initParticle(par); //local position
+    ParticleScratch particle_scratch;
     const Real z0 = inputs.x1_origin;
     const RegionSize dom = inputs.domain;
 
@@ -886,7 +910,7 @@ int main(int argc, char* argv[]){
     std::cout << "dt = " << dt << "  (Courant number " << dt/compute_cfl_dt(mesh, ph.gamma, 1.0) << ")\n";
     {
       ParticleCoupling pc0;
-      if(gas_at_particle(mesh, p, ph.gamma, par.particle_depth, pc0)){
+      if(gas_at_particle(mesh, p, ph.gamma, par.particle_depth, pc0, particle_scratch)){
         Real vrel = std::hypot(p.vz - pc0.gas.u, p.vr - pc0.gas.v);
         std::cout << "Particle start: z - zmin = " << p.z << " cm, r - rmin = " << p.r << " cm, Mach "
                   << vrel/pc0.gas.cs << "\n";
@@ -926,6 +950,7 @@ int main(int argc, char* argv[]){
 
     ImplicitWork work;
     ConductionWork cond_work;
+    cond_work.mg.small_level_cells = par.mg_small_level_cells;
     Real initial_mass   = compute_total(mesh, 0);
     Real initial_energy = compute_total(mesh, 3);
     Real cumulative_mass_out = 0.0;
@@ -958,7 +983,7 @@ int main(int argc, char* argv[]){
         bool has_feedback = false;
         if(p.active){
           ParticleCoupling pc;
-          if(gas_at_particle(mesh, p, ph.gamma, par.particle_depth, pc)){
+          if(gas_at_particle(mesh, p, ph.gamma, par.particle_depth, pc, particle_scratch)){
             has_feedback = leapfrog_first_half(p, pc.gas, ph.Omega, z0, dom.x1min, dom.x2min, dom.x1max, dom.x2max, dt, ph.mu,
                                                pc.inv_gas_mass);
             source_projection(mesh.get_data_view(), p, pc.S); //even if it left in the drift
@@ -976,7 +1001,7 @@ int main(int argc, char* argv[]){
         //particle: second half kick with the gas at t_{n+1} (implicit two-way drag), then its back-reaction
         if(has_feedback){
           ParticleCoupling pc;
-          if(gas_at_particle(mesh, p, ph.gamma, par.particle_depth, pc)){
+          if(gas_at_particle(mesh, p, ph.gamma, par.particle_depth, pc, particle_scratch)){
             leapfrog_second_half(p, pc.gas, ph.Omega, z0, dt, ph.mu, pc.inv_gas_mass);
             source_projection(mesh.get_data_view(), p, pc.S);
           }else{

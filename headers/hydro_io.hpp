@@ -49,6 +49,7 @@ struct SimParams {
   Real gas_rho0, gas_p0, gas_u0, gas_v0; 
   Real gas_mu = 2.3; //mean molecular weight (for heat conduction, gas temperature)
   Real cond_phi = 1.0; //heat conduction saturation q_sat = cond_phi rho c_s^3 (<= 0: no flux limiter)
+  int mg_small_level_cells = 2048; //multigrid levels up to this size run in one team kernel (GPU launch tuning)
   //particle initial condition
   Real pz0, pr0, pvz0, pvr0, pmass, pT0, pradius;
   //position relative to zmin/rmin (exact, unlike particle_z - zmin): used instead of particle_z/particle_r if given

@@ -44,7 +44,7 @@ struct MGLevel {
   IdxView parent;           //cell of the next coarser level containing this cell (-1 on the coarsest)
   IdxView child_ptr, child; //CSR list of the children on the next finer level (empty on level 0)
   IdxView color_cells[2];   //cells of each colour
-  View1D x, b, r, work;     //solution, source, defect, smoother scratch
+  View1D x, b, work;        //solution, source, smoother scratch
 };
 
 class MGConduction {
@@ -68,7 +68,7 @@ public:
 
   //y = A x on the leaf level; with_C = false gives the pure conduction operator L x
   void apply(const View1D& x, const View1D& y, bool with_C);
-  //z = M^{-1} r: one symmetric V-cycle
+  //z = M^{-1} r: one symmetric V-cycle (copies r in and z out; solve() works in place instead)
   void precondition(const View1D& r, const View1D& z);
   //PCG for A x = b (x = 0 start); converged when |r| <= tol*|b| (L2) or when the last correction of x is below
   //x_tol everywhere (max norm, in the units of x). The second test is needed when the diagonal ratio w/C is so large
@@ -81,12 +81,28 @@ public:
   Real omega = 1.0;
   int ncoarsest = 64; //smoothing sweeps (colour pairs) on the coarsest level, forward and then in reverse order
   int min_coarse_cells = 64;
+  //levels with at most this many cells are cycled inside ONE team kernel (small_vcycle): on a GPU a kernel launch
+  //costs more than smoothing a few thousand cells, and the coarse levels would otherwise need ~10 launches each
+  int small_level_cells = 2048;
+  //(public: CUDA extended lambdas can not live in private member functions)
   void smooth(int l, int color);
-  void defect(int l);
+  void defect_restrict(int l);
   void vcycle(int l);
-  void solve_coarsest();
+  void small_vcycle();
+  Real apply_dot(const View1D& x, const View1D& y);
 private:
   std::vector<MGLevel> lv_;
   std::vector<std::int64_t> signature_;
-  View1D cg_r_, cg_z_, cg_p_, cg_Ap_;
+  View1D cg_p_, cg_Ap_;
+
+  //the small levels ls_ .. L-1 stored back to back ("flat"), so that one kernel can walk all of them: global cell
+  //index = level offset + local index. W, D, x, b, work of these levels are views into the flat arrays.
+  static constexpr int kMaxSmall = 32;
+  int ls_ = 0, nsmall_ = 0;
+  Kokkos::Array<int, kMaxSmall + 1> s_cell_off_;      //first flat cell of each small level
+  Kokkos::Array<int, 2*kMaxSmall + 1> s_color_off_;   //first entry of each (level, colour) in s_colcells_
+  IdxView s_rb_, s_re_, s_col_;                       //rows (flat edge ranges) and neighbours (flat cell index)
+  IdxView s_parent_, s_cb_, s_ce_, s_child_, s_colcells_;
+  View1D s_W_, s_D_, s_x_, s_b_, s_work_;
+  void build_small_levels();
 };
