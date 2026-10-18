@@ -382,17 +382,24 @@ void MGConduction::solve_coarsest(){
   IdxView row_ptr = L.row_ptr, col = L.col, c0 = L.color_cells[0], c1 = L.color_cells[1];
   Real om = omega;
   int n = L.n, nsweep = ncoarsest;
-  Kokkos::parallel_for("MGCoarsest", Kokkos::RangePolicy<ExecutionSpace>(0, 1), KOKKOS_LAMBDA(int){
-    for(int c = 0; c < n; ++c) x(c) = 0.0;
+  using member_t = Kokkos::TeamPolicy<ExecutionSpace>::member_type;
+  Kokkos::parallel_for("MGCoarsest", Kokkos::TeamPolicy<ExecutionSpace>(1, Kokkos::AUTO), KOKKOS_LAMBDA(const member_t& t){
+    Kokkos::parallel_for(Kokkos::TeamThreadRange(t, n), [&](int c){ x(c) = 0.0; });
+    t.team_barrier();
     auto sweep = [&](const IdxView& cells){
       int nc = (int)cells.extent(0);
-      for(int k = 0; k < nc; ++k){
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(t, nc), [&](int k){
         int c = cells(k);
         Real s = b(c);
         for(int e = row_ptr(c); e < row_ptr(c + 1); ++e) s += W(e)*x(col(e));
         work(c) = s/D(c);
-      }
-      for(int k = 0; k < nc; ++k){ int c = cells(k); x(c) += om*(work(c) - x(c)); }
+      });
+      t.team_barrier();
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(t, nc), [&](int k){
+        int c = cells(k);
+        x(c) += om*(work(c) - x(c));
+      });
+      t.team_barrier();
     };
     for(int s = 0; s < nsweep; ++s){ sweep(c0); sweep(c1); }
     for(int s = 0; s < nsweep; ++s){ sweep(c1); sweep(c0); }

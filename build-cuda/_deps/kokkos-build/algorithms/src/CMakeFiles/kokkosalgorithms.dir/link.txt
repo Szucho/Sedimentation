@@ -1,0 +1,2 @@
+/mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/kokkos_launch_compiler /mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/nvcc_wrapper /usr/bin/c++ /usr/bin/ar qc libkokkosalgorithms.a CMakeFiles/kokkosalgorithms.dir/KokkosAlgorithms_dummy.cpp.o
+/mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/kokkos_launch_compiler /mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/nvcc_wrapper /usr/bin/c++ /usr/bin/ranlib libkokkosalgorithms.a

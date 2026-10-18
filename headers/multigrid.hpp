@@ -81,14 +81,12 @@ public:
   Real omega = 1.0;
   int ncoarsest = 64; //smoothing sweeps (colour pairs) on the coarsest level, forward and then in reverse order
   int min_coarse_cells = 64;
-
-private:
-  std::vector<MGLevel> lv_;
-  std::vector<std::int64_t> signature_;
-  View1D cg_r_, cg_z_, cg_p_, cg_Ap_;
-
   void smooth(int l, int color);
   void defect(int l);
   void vcycle(int l);
   void solve_coarsest();
+private:
+  std::vector<MGLevel> lv_;
+  std::vector<std::int64_t> signature_;
+  View1D cg_r_, cg_z_, cg_p_, cg_Ap_;
 };
