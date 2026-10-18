@@ -1,2 +1,0 @@
-/mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/kokkos_launch_compiler /mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/nvcc_wrapper /usr/bin/c++ /usr/bin/ar qc libkokkossimd.a CMakeFiles/kokkossimd.dir/Kokkos_SIMD_dummy.cpp.o
-/mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/kokkos_launch_compiler /mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/nvcc_wrapper /usr/bin/c++ /usr/bin/ranlib libkokkossimd.a

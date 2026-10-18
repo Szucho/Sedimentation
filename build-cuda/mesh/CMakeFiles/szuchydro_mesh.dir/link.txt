@@ -1,2 +1,0 @@
-/mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/kokkos_launch_compiler /mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/nvcc_wrapper /usr/bin/c++ /usr/bin/ar qc libszuchydro_mesh.a CMakeFiles/szuchydro_mesh.dir/mesh.cpp.o CMakeFiles/szuchydro_mesh.dir/meshtree.cpp.o
-/mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/kokkos_launch_compiler /mnt/sdb/sediment/Sedimentation/build-cuda/_deps/kokkos-src/bin/nvcc_wrapper /usr/bin/c++ /usr/bin/ranlib libszuchydro_mesh.a

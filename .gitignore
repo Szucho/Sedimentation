@@ -8,3 +8,5 @@ __pycache__/
 supersonic/
 supersonic_nocond/
 conduction_test/
+build*/
+*.log
