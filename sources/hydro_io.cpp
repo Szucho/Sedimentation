@@ -78,6 +78,7 @@ SimParams readParams(const std::string& filename){ //reads in params.txt
   if(has("gas_mu")) p.gas_mu = getd("gas_mu");
   if(has("cond_phi")) p.cond_phi = getd("cond_phi");
   if(has("mg_small_level_cells")) p.mg_small_level_cells = geti("mg_small_level_cells");
+  if(has("courant_max")) p.courant_max = getd("courant_max");
   //particle initial conditions
   //particle_dz / particle_dr (relative to zmin / rmin) or particle_z / particle_r (absolute)
   p.has_pdz     = has("particle_dz");

@@ -882,7 +882,7 @@ int main(int argc, char* argv[]){
     //stability at very large Courant numbers: ~4e4 on a single level, a few 1e3 across fine/coarse boundaries
     //(tested it extensively on the hydrostatic gaussian_z column). 
     //The cap is evaluated on the finest level after every AMR update.
-    const Real courant_max = 2000.0;
+    const Real courant_max = par.courant_max; //params.txt "courant_max", default 2000
     Real t0 = par.t0;
     Real tf = par.tf;
     Real dt_user = (tf - t0)/par.Nt;
